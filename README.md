@@ -1,17 +1,14 @@
 # phpbb-archive — static site generator for phpBB forums
 
-*2026-03-21T01:35:59Z by Showboat dev*
-<!-- showboat-id: b6c8bc4e-4e66-401b-a9ec-f90ddce627fe -->
+phpbb-archive converts a phpBB 3.x MySQL dump into a self-contained static HTML archive. No server required — the output is plain files you can host anywhere (GitHub Pages, Neocities, nginx, etc.).
 
-phpbb-archive converts a phpBB MySQL dump into a self-contained static HTML archive. No server required — the output is plain files you can host anywhere (GitHub Pages, Neocities, nginx, etc.).
-
-## What you need
+### What you need
 
 From your phpBB server, collect the following into a `dump/` directory:
 
 | File/dir | How to get it |
 |----------|--------------|
-| `*.sql` | `mysqldump -u USER -p DATABASE > dump/forum.sql` |
+| `*.sql` | `mysqldump -u USER -p DATABASE > forum.sql` |
 | `config.php` | Copy from your phpBB installation root |
 | `files/` | Attachments directory (copy whole dir) |
 | `images/` | Avatars, smilies, rank images (copy whole dir) |
@@ -68,15 +65,9 @@ All links are relative, so the archive works at any path — subdirectory, GitHu
 
 ## How it works
 
-1. **Convert** the MySQL dump to SQLite (pure Python, no MySQL client needed)
-2. **Read** the board name from `phpbb_config` — no manual title flag required
-3. **Query** phpBB tables: forums, topics, posts, users, attachments, smilies, ranks
-4. **Parse** phpBB's UID-annotated BBCode into HTML (custom parser — generic BBCode libraries don't handle phpBB's format)
-5. **Copy** assets from `dump/` and rewrite CSS paths for static hosting
-6. **Render** Jinja2 templates into static HTML
-
-## Requirements
-
-- Python 3.10+
-- Jinja2 (`pip install jinja2`)
-- A phpBB 3.x database dump and associated files
+- Converts the MySQL dump to SQLite (pure Python, no MySQL client needed)
+- Reads the board name from `phpbb_config` — no manual title flag required
+- Queries phpBB tables: forums, topics, posts, users, attachments, smilies, ranks
+- Parses phpBB's UID-annotated BBCode into HTML (custom parser — generic BBCode libraries don't handle phpBB's format)
+- Copies assets from `dump/` and rewrite CSS paths for static hosting
+- Renders Jinja2 templates into static HTML
