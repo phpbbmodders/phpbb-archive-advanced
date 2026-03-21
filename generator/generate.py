@@ -171,7 +171,7 @@ def get_user_rank(user: dict, ranks: list[dict]) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# Forum tree builder — YOUR CONTRIBUTION
+# Forum tree builder
 # ---------------------------------------------------------------------------
 
 def build_forum_tree(forums: list[dict]) -> list[dict]:
