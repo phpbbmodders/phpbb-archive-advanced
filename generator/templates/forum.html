@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ forum.forum_name | e }} - {{ site_name }}{% endblock %}
+
+{% block breadcrumb %}
+ &rsaquo; <a href="{{ root }}forums/{{ forum.forum_id }}.html">{{ forum.forum_name | e }}</a>
+{% endblock %}
+
+{% block content %}
+<div class="forumbg">
+  <div class="header">
+    <span style="flex:1">{{ forum.forum_name | e }}</span>
+    <span class="col-count">Posts</span>
+  </div>
+  {% if forum.forum_desc %}<div style="padding:4px 10px 6px; font-size:0.85em; color:#555; border-bottom:1px solid #D9BFB7;">{{ forum.forum_desc | safe }}</div>{% endif %}
+
+  {% if topics %}
+  <ul class="topiclist forums">
+    {% for topic in topics %}
+    <li class="row">
+      <div class="forum-title">
+        <a href="{{ root }}topics/{{ topic.topic_id }}.html">{{ topic.topic_title | e }}</a>
+        <div class="forum-desc">
+          Started by
+          {% if topic.topic_poster_name %}
+            <a href="{{ root }}users/{{ topic.topic_poster }}.html">{{ topic.topic_poster_name | e }}</a>
+          {% else %}
+            Unknown
+          {% endif %}
+          &nbsp;·&nbsp; {{ topic.topic_time | timestamp }}
+          {% if topic.topic_last_poster_name %}
+          &nbsp;·&nbsp; Last: {{ topic.topic_last_poster_name | e }} {{ topic.topic_last_post_time | timestamp }}
+          {% endif %}
+        </div>
+      </div>
+      <span class="col-count">{{ topic.topic_posts_approved }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div style="padding:8px 10px; color:#999;">No topics in this forum.</div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block footer_note %}{{ topics | length }} topic(s){% endblock %}

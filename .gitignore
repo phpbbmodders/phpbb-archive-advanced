@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Generated output
+output/
+
+# SQLite working database
+*.db
+
+# Dump data (large, site-specific)
+dump/
+
+# Internal
+.claude/

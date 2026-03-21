@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Board Index - {{ site_name }}{% endblock %}
+
+{% block content %}
+{% for forum in forum_tree %}
+<div class="forabg">
+  <div class="header">
+    <span>{{ forum.forum_name | e }}</span>
+    <span class="col-count">Topics</span>
+    <span class="col-count">Posts</span>
+  </div>
+  <ul class="topiclist forums">
+    {% for child in forum.children %}
+    <li class="row">
+      <div class="forum-title">
+        <a href="{{ root }}forums/{{ child.forum_id }}.html">{{ child.forum_name | e }}</a>
+        {% if child.forum_desc %}<div class="forum-desc">{{ child.forum_desc | safe }}</div>{% endif %}
+        {% if child.children %}
+        <div class="forum-desc">Sub-forums:
+          {% for sub in child.children %}
+            <a href="{{ root }}forums/{{ sub.forum_id }}.html">{{ sub.forum_name | e }}</a>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      <span class="col-count">{{ child.forum_topics_approved }}</span>
+      <span class="col-count">{{ child.forum_posts_approved }}</span>
+      <span class="col-lastpost">
+        {% if child.forum_last_poster_name %}
+          {% if child.forum_last_topic_id %}
+            <a href="{{ root }}topics/{{ child.forum_last_topic_id }}.html#p{{ child.forum_last_post_id }}">{{ child.forum_last_post_subject | e }}</a><br>
+          {% endif %}
+          by {{ child.forum_last_poster_name | e }}<br>
+          {{ child.forum_last_post_time | timestamp }}
+        {% endif %}
+      </span>
+    </li>
+    {% else %}
+    <li class="row"><span style="color:#999">No forums.</span></li>
+    {% endfor %}
+  </ul>
+</div>
+{% else %}
+<p>No forums found.</p>
+{% endfor %}
+{% endblock %}
+
+{% block footer_note %}{{ total_posts }} posts archived{% endblock %}

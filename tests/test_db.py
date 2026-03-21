@@ -1,0 +1,151 @@
+import os
+import tempfile
+import pytest
+from generator.db import import_mysql_dump, PhpbbDatabase
+
+FIXTURE_SQL = """
+CREATE TABLE `phpbb_forums` (
+  `forum_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
+  `forum_name` varchar(255) NOT NULL DEFAULT '',
+  `forum_desc` text NOT NULL,
+  `forum_topics_approved` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `forum_posts_approved` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `forum_last_post_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `forum_last_post_time` int(11) unsigned NOT NULL DEFAULT 0,
+  `forum_last_poster_name` varchar(255) NOT NULL DEFAULT '',
+  `parent_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `left_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `right_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  PRIMARY KEY (`forum_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+INSERT INTO `phpbb_forums` VALUES (1,'General','General discussion',5,20,100,1700000000,'testuser',0,1,2);
+
+CREATE TABLE `phpbb_users` (
+  `user_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
+  `username` varchar(255) NOT NULL DEFAULT '',
+  `user_avatar` varchar(255) NOT NULL DEFAULT '',
+  `user_avatar_type` varchar(255) NOT NULL DEFAULT '',
+  `user_regdate` int(11) unsigned NOT NULL DEFAULT 0,
+  `user_posts` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `user_sig` mediumtext NOT NULL,
+  `user_rank` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+INSERT INTO `phpbb_users` VALUES (2,'testuser','','',1600000000,10,'',0);
+
+CREATE TABLE `phpbb_topics` (
+  `topic_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
+  `forum_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `topic_title` varchar(255) NOT NULL DEFAULT '',
+  `topic_poster` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `topic_time` int(11) unsigned NOT NULL DEFAULT 0,
+  `topic_views` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `topic_posts_approved` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `topic_last_post_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `topic_last_post_time` int(11) unsigned NOT NULL DEFAULT 0,
+  `topic_last_poster_name` varchar(255) NOT NULL DEFAULT '',
+  `topic_status` tinyint(3) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`topic_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+INSERT INTO `phpbb_topics` VALUES (1,1,'Test Topic',2,1600000000,50,3,3,1700000000,'testuser',0);
+
+CREATE TABLE `phpbb_posts` (
+  `post_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
+  `topic_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `forum_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `poster_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `post_time` int(11) unsigned NOT NULL DEFAULT 0,
+  `post_text` mediumtext NOT NULL,
+  `post_subject` varchar(255) NOT NULL DEFAULT '',
+  `bbcode_uid` varchar(8) NOT NULL DEFAULT '',
+  `enable_bbcode` tinyint(1) unsigned NOT NULL DEFAULT 1,
+  PRIMARY KEY (`post_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+INSERT INTO `phpbb_posts` VALUES (1,1,1,2,1600000000,'Hello [b:abc123]world[/b:abc123]','Test Topic','abc123',1);
+INSERT INTO `phpbb_posts` VALUES (2,1,1,2,1600100000,'A reply','Re: Test Topic','',1);
+
+CREATE TABLE `phpbb_attachments` (
+  `attach_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
+  `post_msg_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `topic_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `physical_filename` varchar(255) NOT NULL DEFAULT '',
+  `real_filename` varchar(255) NOT NULL DEFAULT '',
+  `download_count` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  PRIMARY KEY (`attach_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE `phpbb_smilies` (
+  `smiley_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(50) NOT NULL DEFAULT '',
+  `smiley_url` varchar(50) NOT NULL DEFAULT '',
+  `emotion` varchar(50) NOT NULL DEFAULT '',
+  PRIMARY KEY (`smiley_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+INSERT INTO `phpbb_smilies` VALUES (1,':)','icon_e_smile.gif','Smile');
+
+CREATE TABLE `phpbb_ranks` (
+  `rank_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
+  `rank_title` varchar(255) NOT NULL DEFAULT '',
+  `rank_min` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `rank_special` tinyint(1) unsigned NOT NULL DEFAULT 0,
+  `rank_image` varchar(255) NOT NULL DEFAULT '',
+  PRIMARY KEY (`rank_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE `phpbb_bbcodes` (
+  `bbcode_id` smallint(4) unsigned NOT NULL DEFAULT 0,
+  `bbcode_tag` varchar(16) NOT NULL DEFAULT '',
+  `bbcode_match` varchar(255) NOT NULL DEFAULT '',
+  `bbcode_tpl` mediumtext NOT NULL,
+  PRIMARY KEY (`bbcode_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+"""
+
+
+@pytest.fixture
+def db_path(tmp_path):
+    """Create a SQLite DB from the MySQL fixture."""
+    sql_file = tmp_path / "test.sql"
+    sql_file.write_text(FIXTURE_SQL, encoding="utf-8")
+    db_file = tmp_path / "test.db"
+    import_mysql_dump(str(sql_file), str(db_file))
+    return str(db_file)
+
+
+def test_import_creates_tables(db_path):
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    forums = db.get_forums()
+    assert len(forums) == 1
+    assert forums[0]["forum_name"] == "General"
+
+
+def test_get_topics(db_path):
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    topics = db.get_topics(forum_id=1)
+    assert len(topics) == 1
+    assert topics[0]["topic_title"] == "Test Topic"
+
+
+def test_get_posts(db_path):
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    posts = db.get_posts(topic_id=1)
+    assert len(posts) == 2
+    assert "world" in posts[0]["post_text"]
+
+
+def test_get_user(db_path):
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    user = db.get_user(user_id=2)
+    assert user["username"] == "testuser"
+
+
+def test_get_smilies(db_path):
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    smilies = db.get_smilies()
+    assert len(smilies) == 1
+    assert smilies[0]["code"] == ":)"
