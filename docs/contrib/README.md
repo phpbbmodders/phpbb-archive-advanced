@@ -23,3 +23,11 @@ cp docs/contrib/known-dead-hosts.json.example known-dead-hosts.json
     --style-css docs/contrib/phpbbmodders-style.css.example \
     --announcement docs/contrib/announcement.txt.example
 ```
+
+`run.sh.example` wires everything into one script — copy it to the repo root, make it executable, and replace its paths with your own board's:
+
+```bash
+cp docs/contrib/run.sh.example run.sh
+chmod +x run.sh
+./run.sh
+```

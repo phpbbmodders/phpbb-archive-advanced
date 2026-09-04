@@ -51,7 +51,7 @@ The archive's own simple layout ships with a neutral default palette (`generator
 
 ## `docs/contrib/`
 
-Real-world starting points for `--ignore-hosts`, `--style-css`, and `--announcement`, with its own README explaining what pairs with what. All three files follow a `<name>.<ext>.example` naming convention. `known-dead-hosts.json.example` seeds a fixed live filename (`known-dead-hosts.json`, gitignored, conventionally kept at the repo root — see `.gitignore`); `phpbbmodders-style.css.example` and `announcement.txt.example` don't — `--style-css`/`--announcement` take an arbitrary path, so a live copy can go anywhere, or the example can be pointed at directly. `known-dead-hosts.json.example`'s hostnames (parked domains, shut-down image hosts) were confirmed dead against a real dump, not a generic guess.
+Real-world starting points for `--ignore-hosts`, `--style-css`, and `--announcement`, with its own README explaining what pairs with what. All four files follow a `<name>.<ext>.example` naming convention. `known-dead-hosts.json.example` seeds a fixed live filename (`known-dead-hosts.json`, gitignored, conventionally kept at the repo root — see `.gitignore`); `phpbbmodders-style.css.example` and `announcement.txt.example` don't — `--style-css`/`--announcement` take an arbitrary path, so a live copy can go anywhere, or the example can be pointed at directly. `known-dead-hosts.json.example`'s hostnames (parked domains, shut-down image hosts) were confirmed dead against a real dump, not a generic guess. `run.sh.example` is a fourth file, pairing with no single flag — it's phpbbmodders.net's real wrapper script, showing how every flag composes into one command.
 
 ## Operational fixes
 
