@@ -216,6 +216,8 @@ The file is plain BBCode text, parsed the same way post content is:
 
 Every other link the archive generates is relative, so it works at any path — but sitemap entries have to be absolute URLs, which is why this flag needs the full deployment URL rather than inferring it. Excluded forums/topics are already left out of `output/` entirely, so they're never in the sitemap either.
 
+Every topic page also carries Open Graph and Twitter Card meta tags (title, description from the opening post, site name) unconditionally, so a shared link shows a real preview instead of nothing. `og:url` is the one tag that needs an absolute URL, so it only appears when `--sitemap-url` is set — everything else works with or without it.
+
 ### Full-text search
 
 `--search` adds `search.html` (linked from every page's breadcrumb bar) and indexes every generated page with [Pagefind](https://pagefind.app/), a static client-side search engine — no server, no external service, same self-contained philosophy as the rest of the archive:

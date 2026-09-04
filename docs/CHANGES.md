@@ -57,6 +57,10 @@ The archive's own simple layout ships with a neutral default palette (`generator
 
 Writes `output/sitemap.xml` (index, every forum, every topic, each with a `<lastmod>` from its most recent post) and `output/robots.txt` pointing at it. Requires an absolute base URL because sitemap entries must be absolute, unlike every other link the archive generates, which stays relative so the archive works at any path. Excluded forums/topics are already left out of `output/` entirely, so they're never in the sitemap either.
 
+## Open Graph / Twitter Card meta tags
+
+Every topic page carries `og:title`, `og:type`, `og:site_name`, `og:description` (the opening post's text, stripped of HTML and truncated via Jinja2's built-in `striptags`/`truncate` filters — no new Python code needed), and matching `twitter:*` tags, unconditionally — so a shared topic link shows a real title/preview instead of nothing. `og:description`/`twitter:description` are omitted gracefully when a topic's post content is missing from the dump. `og:url` is the one tag that needs an absolute URL; it reuses `--sitemap-url`'s value rather than introducing a second "what's my base URL" flag, and is simply omitted when that flag isn't set.
+
 ## Full-text search (`--search`)
 
 Adds `search.html` (linked from every page's breadcrumb bar) and indexes every generated page with Pagefind, a static client-side search engine, via the `pagefind[bin]` Python package — a real compiled search binary installed through pip, no Node.js needed. Runs as a subprocess after every other page is written.

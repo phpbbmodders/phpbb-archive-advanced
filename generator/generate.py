@@ -820,7 +820,8 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   forums: list[dict], bad_attachments: set[str],
                   bad_avatars: set[str], remote_avatar_exts: dict[int, str],
                   avatar_overrides: dict[int, str], external_images: dict[str, str],
-                  site_name: str = "", announcement_html: str | None = None) -> int:
+                  site_name: str = "", announcement_html: str | None = None,
+                  site_url: str | None = None) -> int:
     """Render all topic pages. Returns total post count."""
     topics_dir = out / "topics"
     topics_dir.mkdir(exist_ok=True)
@@ -889,6 +890,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
             root="../",
             site_name=site_name,
             announcement_html=announcement_html,
+            site_url=site_url,
         )
         (topics_dir / f"{topic['topic_id']}.html").write_text(html, encoding="utf-8")
 
@@ -1151,13 +1153,15 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     # --- Pages ---
     forum_tree = prune_empty_categories(build_forum_tree(process_forum_descs(forums, shared_parser)))
 
-    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name, announcement_html=announcement_html)
+    site_url = sitemap_url if not sitemap_url or sitemap_url.endswith("/") else sitemap_url + "/"
+
+    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name, announcement_html=announcement_html, site_url=site_url)
     render_forums(env, out, db, users, shared_parser, forums, site_name=site_name, announcement_html=announcement_html)
     render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name)
     render_index(env, out, forum_tree or [], total_posts, site_name=site_name, announcement_html=announcement_html)
 
-    if sitemap_url:
-        render_sitemap(out, db, sitemap_url, forums)
+    if site_url:
+        render_sitemap(out, db, site_url, forums)
 
     if search:
         render_search(env, out, site_name=site_name)

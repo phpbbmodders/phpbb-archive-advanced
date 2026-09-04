@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}{{ topic.topic_title | e }} - {{ site_name }}{% endblock %}
 
+{% block extra_head %}
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="{{ site_name }}">
+<meta property="og:title" content="{{ topic.topic_title }} - {{ site_name }}">
+{% if posts %}<meta property="og:description" content="{{ posts[0].rendered_html | striptags | truncate(200) }}">{% endif %}
+{% if site_url %}<meta property="og:url" content="{{ site_url }}topics/{{ topic.topic_id }}.html">{% endif %}
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{{ topic.topic_title }} - {{ site_name }}">
+{% if posts %}<meta name="twitter:description" content="{{ posts[0].rendered_html | striptags | truncate(200) }}">{% endif %}
+{% endblock %}
+
 {% block breadcrumb %}
  &rsaquo; <a href="{{ root }}forums/{{ topic.forum_id }}.html">{{ forum_name | e }}</a>
  &rsaquo; {{ topic.topic_title | e }}
