@@ -206,5 +206,5 @@ All links are relative, so the archive works at any path — subdirectory, GitHu
 - Reads the board name from `phpbb_config` — no manual title flag required
 - Queries phpBB tables: forums, topics, posts, users, attachments, smilies, ranks
 - Parses phpBB's UID-annotated BBCode into HTML (custom parser — generic BBCode libraries don't handle phpBB's format)
-- Copies assets from `dump/` and rewrite CSS paths for static hosting
+- Copies assets from `dump/` and rewrites CSS paths for static hosting
 - Renders Jinja2 templates into static HTML

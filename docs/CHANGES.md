@@ -1,6 +1,6 @@
 # Structural changes and features since the original
 
-Everything below was added on top of matildepark's original 4 commits (`b079b39`..`8b627fa`) while archiving a real, large phpBB 3.3.x board (phpbbmodders.net — 4300+ topics, 26800+ posts, 8100+ users). Six are committed locally; the rest (`--style-css`, `--announcement`, `docs/contrib/`, the README rewrite) are staged but not yet committed. Nothing here has been pushed or opened as a PR.
+Everything below was added on top of matildepark's original 4 commits (`b079b39`..`8b627fa`) while archiving a real, large phpBB 3.3.x board (phpbbmodders.net — 4300+ topics, 26800+ posts, 8100+ users).
 
 ## New CLI flags
 
@@ -51,7 +51,7 @@ The archive's own simple layout ships with a neutral default palette (`generator
 
 ## `docs/contrib/`
 
-Real-world starting points for `--ignore-hosts`, `--style-css`, and `--announcement`, with its own README explaining what pairs with what. Follows a `<name>.<ext>.example` naming convention (tracked template; a gitignored live copy sits at the same path without `.example`). Also home to `known-dead-hosts.json.example` — hostnames (parked domains, shut-down image hosts) confirmed dead against a real dump, not a generic guess.
+Real-world starting points for `--ignore-hosts`, `--style-css`, and `--announcement`, with its own README explaining what pairs with what. All three files follow a `<name>.<ext>.example` naming convention. `known-dead-hosts.json.example` seeds a fixed live filename (`known-dead-hosts.json`, gitignored, conventionally kept at the repo root — see `.gitignore`); `phpbbmodders-style.css.example` and `announcement.txt.example` don't — `--style-css`/`--announcement` take an arbitrary path, so a live copy can go anywhere, or the example can be pointed at directly. `known-dead-hosts.json.example`'s hostnames (parked domains, shut-down image hosts) were confirmed dead against a real dump, not a generic guess.
 
 ## Operational fixes
 
