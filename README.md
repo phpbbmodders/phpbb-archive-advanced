@@ -47,7 +47,7 @@ usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--url-mirrors FILE] [-i] [--incremental]
                    [--ignore-hosts FILE] [--attachment-recovery DIR]
                    [--style-css FILE] [--announcement FILE]
-                   [--sitemap-url URL] [--search]
+                   [--sitemap-url URL] [--search] [-c]
 
 Generate a static HTML archive from a phpBB MySQL dump
 
@@ -134,6 +134,14 @@ options:
                         generator/requirements.txt) and runs it as a
                         subprocess after every other page is written. Off by
                         default.
+  -c, --check-links     Scan an already-generated output/ for internal
+                        href/src links that don't resolve — either to a file
+                        that doesn't exist, or (for a #anchor link) to an
+                        id="..." that doesn't exist in the target file — and
+                        write them to output/broken_links.json, instead of
+                        generating the archive. External URLs aren't checked
+                        here — see --ignore-hosts/--url-mirrors for those. Run
+                        after a normal build.
 ```
 
 ### Fixing avatars the generator can't fetch on its own
@@ -179,6 +187,17 @@ If a source site blocks the generator (Cloudflare, robots rules) but you have di
 ```
 
 Run `-i`/`--check-images` first to see which URLs currently fail to resolve, so you know what's worth mirroring, before committing to a full run.
+
+### Checking for broken internal links
+
+`-l`/`-m`/`-i` inspect the dump before you generate; `-c`/`--check-links` inspects the archive after — it needs a real `output/` to scan, so run it once you have a build:
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/
+.venv/bin/python -m generator.generate --output output/ -c
+```
+
+Walks every generated page's `href`/`src` attributes and flags two things: a link to a file that doesn't exist, and a `#anchor` link (e.g. `topics/106.html#p53377`, a permalink to one specific post) whose target file exists but doesn't actually contain that anchor — the more useful of the two, since a plain missing-page link is easy to spot by eye, but a stale anchor pointing at a post that got excluded or never recovered isn't. External URLs aren't touched here; that's `--ignore-hosts`/`--url-mirrors`'s job. Results go to `output/broken_links.json`.
 
 ### Custom color scheme
 

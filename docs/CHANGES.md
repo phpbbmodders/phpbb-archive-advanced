@@ -19,6 +19,7 @@ Everything below was added on top of matildepark's original 4 commits (`b079b39`
 | `--announcement FILE` | Shows a notice on index/forum/topic pages — see below |
 | `--sitemap-url URL` | Writes `sitemap.xml`/`robots.txt` for that absolute base URL — see below |
 | `--search` | Adds `search.html`, indexed with Pagefind — see below |
+| `-c`/`--check-links` | Diagnostic mode: scans an already-generated `output/` for internal links that don't resolve, writes `output/broken_links.json` — see below |
 
 ## Corrupted and missing content
 
@@ -68,6 +69,12 @@ Adds `search.html` (linked from every page's breadcrumb bar) and indexes every g
 Result titles come from a `data-pagefind-meta="title:..."` attribute set on every page's `<body>` (via a new `body_attrs` template block in `base.html`) — without it, Pagefind defaults to each page's first `<h1>`, which on this archive is always just the site name, making every search result look identical. `search.html` itself is excluded from the index (`data-pagefind-ignore`) since it has no content of its own. The widget is re-themed via its own documented CSS custom properties (`--pagefind-ui-primary` etc.) rather than by fighting its markup — `docs/contrib/phpbbmodders-style.css.example`'s `#search` block is a real worked example.
 
 Pagefind can't fetch its own index under `file://` — confirmed against Pagefind's own docs and by reproducing it: opening `search.html` directly as a file accepts a query and shows "Searching for…" but never returns results, with no error surfaced anywhere. Needs any real static file server (even a local one) to work at all.
+
+## Broken-internal-link checker (`-c`/`--check-links`)
+
+Unlike `-l`/`-m`/`-i`, which inspect the dump *before* generating, this inspects an already-generated `output/` *after* — it only makes sense to run once a real build exists. Walks every generated page's `href`/`src` attributes and flags a link to a file that doesn't exist, or a `#anchor` link whose target file exists but doesn't contain that anchor (e.g. `topics/106.html#p53377`, a permalink to one specific post that got excluded or was never recovered) — the anchor case is the more useful of the two, since it's not something you'd notice just by browsing. External URLs are out of scope; that's `--ignore-hosts`/`--url-mirrors`'s job. No new dependency — a regex over each file's text, not an HTML parser.
+
+The regex is anchored to an actual opening tag (`<a ...href="..."` / `<img ...src="..."`), not a bare `href="..."` match anywhere in the file — found the hard way: a first pass against a real board's dump returned 6,351 "broken links," almost all of them phpBB template source code (`{U_FEED}`, `href="{T_THEME_PATH}/print.css"`, etc.) that someone had pasted inside a `[code]` block. Its `<`/`>` were correctly HTML-escaped so it couldn't be interpreted as a real tag, but the literal `"` characters in `href="..."` weren't, so a bare-substring regex matched it as if it were one. Anchoring to a real unescaped `<tagname` before the attribute fixed it — re-running against the same dump dropped the count to 19, and those remaining were pre-existing data quirks (a real `<a href="%27,%27">` from that same quoted source-array text, and a few spam posts missing a proper `http://` prefix), not archive bugs.
 
 ## `docs/contrib/`
 

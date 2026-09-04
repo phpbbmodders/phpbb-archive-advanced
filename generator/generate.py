@@ -13,6 +13,7 @@ import html
 import json
 import logging
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -1244,6 +1245,62 @@ def check_images(dump_dir: str, output_dir: str, url_mirrors_path: str | None = 
     db.close()
 
 
+def check_links(output_dir: str) -> None:
+    """Diagnostic mode (-c/--check-links): scan every generated HTML page
+    for internal href/src links that don't resolve — either to a file
+    that doesn't exist under output/, or (when the link includes a
+    #anchor) to an id="..." that doesn't exist in the target file. Only
+    checks internal (relative) links; external URLs are a separate,
+    already-handled problem (see --ignore-hosts/--url-mirrors). Needs an
+    already-generated output/ — run a normal generate() first."""
+    out = Path(output_dir)
+    if not out.exists():
+        raise FileNotFoundError(f"{out} does not exist — run a normal generate() first")
+
+    all_files = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
+    html_files = sorted(p for p in all_files if p.endswith(".html"))
+
+    # Anchored to an actual opening tag (<a ... href="..." or <img ... src="...")
+    # rather than a bare href=/src= match anywhere in the file — a quoted
+    # code block showing raw HTML source has its real < > escaped to &lt;/&gt;
+    # but not necessarily its "  quotes, so a bare match would misfire on
+    # inert text that merely looks like a tag attribute.
+    link_re = re.compile(r'<[a-zA-Z][a-zA-Z0-9]*\b[^>]*?\s(?:href|src)="([^"]*)"')
+    anchor_cache: dict[str, set[str]] = {}
+
+    def anchors_in(rel_path: str) -> set[str]:
+        if rel_path not in anchor_cache:
+            text = (out / rel_path).read_text(encoding="utf-8", errors="replace")
+            anchor_cache[rel_path] = set(re.findall(r'id="([^"]+)"', text))
+        return anchor_cache[rel_path]
+
+    broken = []
+    for rel_path in html_files:
+        text = (out / rel_path).read_text(encoding="utf-8", errors="replace")
+        current_dir = Path(rel_path).parent
+        for url in link_re.findall(text):
+            if url.startswith(("http://", "https://", "mailto:", "javascript:", "data:")):
+                continue
+            path_part, _, anchor = url.partition("#")
+            if path_part:
+                target = posixpath.normpath((current_dir / path_part).as_posix())
+            else:
+                target = rel_path  # self-reference (bare #anchor)
+            if target not in all_files:
+                broken.append({"page": rel_path, "link": url, "reason": "missing file"})
+                continue
+            if anchor and target.endswith(".html") and anchor not in anchors_in(target):
+                broken.append({"page": rel_path, "link": url, "reason": "missing anchor"})
+
+    print(f"Checked {len(html_files)} page(s), {len(all_files)} total file(s) in {out}.")
+    if broken:
+        report_path = out / "broken_links.json"
+        report_path.write_text(json.dumps(broken, indent=2) + "\n", encoding="utf-8")
+        print(f"\n{len(broken)} broken internal link(s) — written to {report_path}")
+    else:
+        print("No broken internal links found.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a static HTML archive from a phpBB MySQL dump")
     parser.add_argument("--dump", default="dump", help="Path to dump/ directory")
@@ -1276,6 +1333,13 @@ def main() -> None:
                               "--url-mirrors or the network) and write them to "
                               "output/unresolved_images.json, instead of generating the archive — "
                               "use ahead of a full run to see what needs mirroring")
+    parser.add_argument("-c", "--check-links", action="store_true",
+                         help="Scan an already-generated output/ for internal href/src links that "
+                              "don't resolve — either to a file that doesn't exist, or (for a "
+                              "#anchor link) to an id=\"...\" that doesn't exist in the target "
+                              "file — and write them to output/broken_links.json, instead of "
+                              "generating the archive. External URLs aren't checked here — see "
+                              "--ignore-hosts/--url-mirrors for those. Run after a normal build.")
     parser.add_argument("--incremental", action="store_true",
                          help="Keep previously-downloaded attachments/avatars/external images "
                               "instead of re-fetching everything — only failed URLs are retried. "
@@ -1327,6 +1391,8 @@ def main() -> None:
         list_forums(args.dump, args.output)
     elif args.check_images:
         check_images(args.dump, args.output, args.url_mirrors, args.ignore_hosts)
+    elif args.check_links:
+        check_links(args.output)
     else:
         generate(args.dump, args.output, args.avatar_overrides, args.exclude, args.url_mirrors,
                  args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
