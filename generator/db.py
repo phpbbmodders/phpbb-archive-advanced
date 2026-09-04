@@ -1,5 +1,6 @@
 """MySQL dump → SQLite import and phpBB database query helpers."""
 
+import html
 import re
 import sqlite3
 import logging
@@ -33,6 +34,8 @@ def import_mysql_dump(sql_path: str, db_path: str) -> None:
                 or u.startswith("LOCK ")
                 or u.startswith("UNLOCK ")
                 or u.startswith("SET ")
+                or u.startswith("CREATE DATABASE")
+                or u.startswith("USE ")
                 or u.startswith("DROP TABLE")
                 or u.startswith("KEY ")
                 or u.startswith("UNIQUE KEY ")
@@ -98,16 +101,37 @@ class PhpbbDatabase:
         cursor = self.conn.execute(sql, params)
         return [dict(row) for row in cursor.fetchall()]
 
+    @staticmethod
+    def _unescape_fields(rows: list[dict], *fields: str) -> list[dict]:
+        """Undo phpBB's stored htmlspecialchars() encoding on plain display
+        fields (names, titles, subjects) so templates can HTML-escape them
+        normally on render instead of double-encoding already-encoded text.
+
+        Not for post_text/user_sig/forum_desc: those go through the BBCode
+        parser, which expects them still encoded.
+        """
+        for row in rows:
+            for field in fields:
+                if row.get(field):
+                    row[field] = html.unescape(row[field])
+        return rows
+
     def get_forums(self) -> list[dict]:
-        return self._query(
-            f'SELECT * FROM "{self._table("forums")}" ORDER BY left_id'
+        return self._unescape_fields(
+            self._query(
+                f'SELECT * FROM "{self._table("forums")}" ORDER BY left_id'
+            ),
+            "forum_name", "forum_last_post_subject",
         )
 
     def get_topics(self, forum_id: int) -> list[dict]:
-        return self._query(
-            f'SELECT * FROM "{self._table("topics")}" WHERE forum_id = ? '
-            f"ORDER BY topic_last_post_time DESC",
-            (forum_id,),
+        return self._unescape_fields(
+            self._query(
+                f'SELECT * FROM "{self._table("topics")}" WHERE forum_id = ? '
+                f"ORDER BY topic_last_post_time DESC",
+                (forum_id,),
+            ),
+            "topic_title",
         )
 
     def get_post_topic_id(self, post_id: int) -> int | None:
@@ -125,16 +149,22 @@ class PhpbbDatabase:
         )
 
     def get_user(self, user_id: int) -> dict | None:
-        rows = self._query(
-            f'SELECT * FROM "{self._table("users")}" WHERE user_id = ?',
-            (user_id,),
+        rows = self._unescape_fields(
+            self._query(
+                f'SELECT * FROM "{self._table("users")}" WHERE user_id = ?',
+                (user_id,),
+            ),
+            "username",
         )
         return rows[0] if rows else None
 
     def get_all_users(self) -> list[dict]:
-        return self._query(
-            f'SELECT * FROM "{self._table("users")}" WHERE user_type != 2 '
-            f"ORDER BY username"
+        return self._unescape_fields(
+            self._query(
+                f'SELECT * FROM "{self._table("users")}" WHERE user_type != 2 '
+                f"ORDER BY username"
+            ),
+            "username",
         )
 
     def get_attachments(self, post_id: int) -> list[dict]:
@@ -142,6 +172,9 @@ class PhpbbDatabase:
             f'SELECT * FROM "{self._table("attachments")}" WHERE post_msg_id = ?',
             (post_id,),
         )
+
+    def get_all_attachments(self) -> list[dict]:
+        return self._query(f'SELECT * FROM "{self._table("attachments")}"')
 
     def get_smilies(self) -> list[dict]:
         return self._query(f'SELECT * FROM "{self._table("smilies")}"')

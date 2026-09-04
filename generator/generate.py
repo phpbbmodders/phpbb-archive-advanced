@@ -10,14 +10,16 @@ Usage:
 import argparse
 import datetime
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
 
 import jinja2
+from PIL import Image
 
 from generator.db import import_mysql_dump, PhpbbDatabase
-from generator.bbcode import PhpbbBBCodeParser
+from generator.bbcode import PhpbbBBCodeParser, IMAGE_EXTENSIONS
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -136,12 +138,25 @@ def copy_assets(dump_dir: Path, output_dir: Path) -> None:
         logger.info("Copied avatars")
 
     # --- Attachments ---
+    # Some dumps end up with attachment files duplicated inside stray nested
+    # subdirectories (e.g. dump/files/files/, dump/files/files/files/) from
+    # how they were originally collected. Attachment src paths are always
+    # flat (assets/attachments/<physical_filename>), so flatten by basename
+    # instead of preserving the dump's directory structure, keeping the
+    # shallowest copy on a name collision.
     files_src = dump_dir / "files"
     if files_src.exists():
         dest = assets / "attachments"
         dest.mkdir(exist_ok=True)
-        shutil.copytree(files_src, dest, dirs_exist_ok=True)
-        logger.info("Copied attachments")
+        copied = 0
+        for dirpath, _dirnames, filenames in os.walk(files_src):
+            for name in filenames:
+                target = dest / name
+                if target.exists():
+                    continue
+                shutil.copy2(Path(dirpath) / name, target)
+                copied += 1
+        logger.info("Copied attachments (%d files)", copied)
 
 
 def build_attachments_map(db: PhpbbDatabase, post_ids: list[int]) -> dict[int, list[dict]]:
@@ -152,6 +167,33 @@ def build_attachments_map(db: PhpbbDatabase, post_ids: list[int]) -> dict[int, l
         if rows:
             result[pid] = rows
     return result
+
+
+def find_bad_image_attachments(db: PhpbbDatabase, out: Path) -> set[str]:
+    """Return physical_filenames of image attachments that are missing from
+    assets/attachments/ or fail to decode (e.g. corrupted in the source
+    dump). These get dropped from post bodies instead of rendered as a
+    broken image."""
+    attachments_dir = out / "assets" / "attachments"
+    bad: set[str] = set()
+    checked = 0
+    for att in db.get_all_attachments():
+        real = att["real_filename"]
+        if not real.lower().endswith(IMAGE_EXTENSIONS):
+            continue
+        checked += 1
+        path = attachments_dir / att["physical_filename"]
+        if not path.exists():
+            bad.add(att["physical_filename"])
+            continue
+        try:
+            with Image.open(path) as im:
+                im.load()
+        except Exception:
+            bad.add(att["physical_filename"])
+    if bad:
+        logger.warning("Dropping %d of %d image attachments (missing or corrupted)", len(bad), checked)
+    return bad
 
 
 def get_user_rank(user: dict, ranks: list[dict]) -> dict | None:
@@ -257,7 +299,8 @@ def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
 def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   users: dict[int, dict], smilies: list[dict],
                   ranks: list[dict], custom_bbcodes: list[dict],
-                  forums: list[dict], site_name: str = "") -> int:
+                  forums: list[dict], bad_attachments: set[str],
+                  site_name: str = "") -> int:
     """Render all topic pages. Returns total post count."""
     topics_dir = out / "topics"
     topics_dir.mkdir(exist_ok=True)
@@ -281,6 +324,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
             attachments=attachments_map,
             custom_bbcodes=custom_bbcodes,
             assets_prefix="../assets",
+            bad_attachments=bad_attachments,
         )
 
         rendered_posts = []
@@ -399,6 +443,9 @@ def generate(dump_dir: str, output_dir: str) -> None:
     logger.info("Copying assets ...")
     copy_assets(dump, out)
 
+    # --- Image attachments missing or corrupted in the source dump ---
+    bad_attachments = find_bad_image_attachments(db, out)
+
     # --- Lookup tables ---
     smilies = db.get_smilies()
     ranks = db.get_ranks()
@@ -426,7 +473,7 @@ def generate(dump_dir: str, output_dir: str) -> None:
     # --- Pages ---
     forum_tree = build_forum_tree(process_forum_descs(forums, shared_parser))
 
-    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, site_name=site_name)
+    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, site_name=site_name)
     render_forums(env, out, db, users, shared_parser, forums, site_name=site_name)
     render_users(env, out, db, smilies, ranks, custom_bbcodes, site_name=site_name)
     render_index(env, out, forum_tree or [], total_posts, site_name=site_name)

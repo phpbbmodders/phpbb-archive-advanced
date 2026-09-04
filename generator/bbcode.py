@@ -10,11 +10,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
+
 
 class PhpbbBBCodeParser:
     def __init__(self, smilies: list[dict], attachments: dict[int, list[dict]],
                  custom_bbcodes: list[dict] | None = None,
-                 assets_prefix: str = "../assets"):
+                 assets_prefix: str = "../assets",
+                 bad_attachments: set[str] | None = None):
         # Map smiley code → image filename
         self.smilies = {s["code"]: s["smiley_url"] for s in smilies}
         # Map post_id → list of attachment dicts (ordered)
@@ -22,6 +25,11 @@ class PhpbbBBCodeParser:
         # Custom BBCodes: list of dicts with bbcode_tag, bbcode_match, bbcode_tpl
         self.custom_bbcodes = custom_bbcodes or []
         self.assets_prefix = assets_prefix
+        # physical_filename values that look like images but are missing or
+        # fail to decode (e.g. corrupted in the source dump) — dropped
+        # entirely from the rendered post rather than shown as a broken
+        # image or a "missing attachment" placeholder.
+        self.bad_attachments = bad_attachments or set()
 
     def _append_trailing_attachments(self, result: str, post_id: int, original_text: str) -> str:
         """Append attachments that had no [attachment=N] inline tag."""
@@ -42,8 +50,11 @@ class PhpbbBBCodeParser:
                 continue
             physical = att["physical_filename"]
             real = att["real_filename"]
+            is_image = real.lower().endswith(IMAGE_EXTENSIONS)
+            if is_image and physical in self.bad_attachments:
+                continue
             path = f"{self.assets_prefix}/attachments/{physical}"
-            if real.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")):
+            if is_image:
                 trailing.append(
                     f'<div class="inline-attachment">'
                     f'<img src="{path}" alt="{html.escape(real)}" />'
@@ -178,13 +189,18 @@ class PhpbbBBCodeParser:
             if index < len(post_attachments):
                 physical = post_attachments[index]["physical_filename"]
                 real = post_attachments[index]["real_filename"]
+                is_image = real.lower().endswith(IMAGE_EXTENSIONS)
+                if is_image and physical in self.bad_attachments:
+                    return ''
                 path = f"{self.assets_prefix}/attachments/{physical}"
-                if real.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")):
+                if is_image:
                     return (f'<div class="inline-attachment">'
                             f'<img src="{path}" alt="{html.escape(real)}" />'
                             f'<br/><em>{html.escape(real)}</em></div>')
                 return f'<div class="inline-attachment"><a href="{path}">{html.escape(real)}</a></div>'
             logger.warning("XML attachment index %d out of range for post %s", index, post_id)
+            if filename.lower().endswith(IMAGE_EXTENSIONS):
+                return ''
             return f'<span class="attachment-missing">[Attachment: {html.escape(filename)}]</span>'
 
         text = re.sub(r'<ATTACHMENT(\s[^>]*)?>.*?</ATTACHMENT>', _xml_attachment, text, flags=re.DOTALL)
@@ -234,11 +250,17 @@ class PhpbbBBCodeParser:
                 real = post_attachments[index]["real_filename"]
             else:
                 logger.warning("Attachment index %d out of range for post %d", index, post_id)
+                if filename.lower().endswith(IMAGE_EXTENSIONS):
+                    return ''
                 return f'<span class="attachment-missing">[Attachment: {html.escape(filename)}]</span>'
+
+            is_image = real.lower().endswith(IMAGE_EXTENSIONS)
+            if is_image and physical in self.bad_attachments:
+                return ''
 
             path = f"{self.assets_prefix}/attachments/{physical}"
             # If it looks like an image, embed it; otherwise link it
-            if real.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")):
+            if is_image:
                 return f'<div class="inline-attachment"><img src="{path}" alt="{html.escape(real)}" /><br/><em>{html.escape(real)}</em></div>'
             else:
                 return f'<div class="inline-attachment"><a href="{path}">{html.escape(real)}</a></div>'
