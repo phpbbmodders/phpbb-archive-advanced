@@ -185,3 +185,14 @@ details.spoiler summary { cursor: pointer; color: #2E6EA6; }
   background: #D1D7E3;
 }
 #page-footer a { color: #2E6EA6; }
+
+/* Pagefind search widget (see --search) — re-themed via its own CSS
+   custom properties instead of overriding its markup/classes directly. */
+#search {
+  --pagefind-ui-primary: #2E6EA6;
+  --pagefind-ui-text: #333333;
+  --pagefind-ui-background: #FFFFFF;
+  --pagefind-ui-border: #B3C0D8;
+  --pagefind-ui-tag: #D1D7E3;
+  --pagefind-ui-font: Verdana, Geneva, sans-serif;
+}

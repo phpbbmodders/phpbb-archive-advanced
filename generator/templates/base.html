@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}{{ page_title }} - {{ site_name }}{% endblock %}</title>
 <link rel="stylesheet" href="{{ root }}assets/style.css">
+{% block extra_head %}{% endblock %}
 </head>
-<body>
+<body{% block body_attrs %} data-pagefind-meta="title:{{ page_title }} - {{ site_name }}"{% endblock %}>
 <div id="wrap">
 
 <div id="page-header">
@@ -16,7 +17,7 @@
 
 <div id="page-body">
 <div class="breadcrumb">
-  <a href="{{ root }}index.html">Board index</a>{% block breadcrumb %}{% endblock %}
+  <a href="{{ root }}index.html">Board index</a> &middot; <a href="{{ root }}search.html">Search</a>{% block breadcrumb %}{% endblock %}
 </div>
 {% block content %}{% endblock %}
 </div>

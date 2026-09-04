@@ -1,13 +1,13 @@
 # Contributed examples
 
-Real-world starting points for the generator's optional `--ignore-hosts`, `--style-css`, and `--announcement` flags — copy one, drop the `.example` suffix, and edit it for your own board. See the main [README](../../README.md) for full flag documentation.
+Real-world starting points for the generator's optional `--ignore-hosts`, `--style-css`, and `--announcement` flags, plus a real full-flag `run.sh` wrapper — copy one, drop the `.example` suffix, and edit it for your own board. See the main [README](../../README.md) for full flag documentation.
 
 | File | Pairs with | What it is |
 |------|-----------|------------|
 | [`known-dead-hosts.json.example`](known-dead-hosts.json.example) | `--ignore-hosts` | Image/avatar hosts that were confirmed dead (parked domains, shut-down services) during a real archive run — hostnames worth skipping without a network attempt on any board. |
 | [`phpbbmodders-style.css.example`](phpbbmodders-style.css.example) | `--style-css` | A complete custom stylesheet, sourced from a live board's actual `prosilver` child theme rather than guessed — a worked example of what a `--style-css` file looks like end to end. |
 | [`announcement.txt.example`](announcement.txt.example) | `--announcement` | A short BBCode notice ("this board is now a read-only archive") — a worked example of the plain-text-BBCode format `--announcement` expects. |
-| [`run.sh.example`](run.sh.example) | all of them | phpbbmodders.net's actual wrapper script, wiring every flag above (plus `--avatar-overrides`, `--url-mirrors`, `--attachment-recovery`, `--exclude`, `--incremental`) into one command. Real paths from a real deployment, not a generic template — copy it and adjust the paths for your own board. |
+| [`run.sh.example`](run.sh.example) | all of them | phpbbmodders.net's actual wrapper script, wiring every flag above (plus `--avatar-overrides`, `--url-mirrors`, `--attachment-recovery`, `--exclude`, `--sitemap-url`, `--search`, `--incremental`) into one command. Real paths from a real deployment, not a generic template — copy it and adjust the paths for your own board. |
 
 Usage:
 

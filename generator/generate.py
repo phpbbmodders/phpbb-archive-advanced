@@ -15,6 +15,8 @@ import logging
 import os
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import jinja2
@@ -989,6 +991,27 @@ def render_sitemap(out: Path, db: PhpbbDatabase, site_url: str, forums: list[dic
     logger.info("Rendered robots.txt")
 
 
+def render_search(env: jinja2.Environment, out: Path, site_name: str = "") -> None:
+    tmpl = env.get_template("search.html")
+    html_out = tmpl.render(page_title="Search", assets="assets", root="", site_name=site_name)
+    (out / "search.html").write_text(html_out, encoding="utf-8")
+    logger.info("Rendered search.html")
+
+
+def run_pagefind(out: Path) -> None:
+    """Index every generated page for client-side search (see --search).
+    Runs the pagefind binary installed via the pagefind[bin] Python
+    package as a subprocess — there's no importable API, only a CLI.
+    search.html itself is excluded via data-pagefind-ignore (see
+    search.html's body_attrs block) since it has no real content to
+    index, just the search widget."""
+    logger.info("Indexing for search (pagefind) ...")
+    subprocess.run(
+        [sys.executable, "-m", "pagefind", "--site", str(out)],
+        check=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -1041,7 +1064,8 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
              exclude_path: str | None = None, url_mirrors_path: str | None = None,
              incremental: bool = False, ignored_hosts_path: str | None = None,
              attachment_recovery_dir: str | None = None, style_css_path: str | None = None,
-             announcement_path: str | None = None, sitemap_url: str | None = None) -> None:
+             announcement_path: str | None = None, sitemap_url: str | None = None,
+             search: bool = False) -> None:
     out = Path(output_dir)
     if out.exists():
         if incremental:
@@ -1135,7 +1159,14 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     if sitemap_url:
         render_sitemap(out, db, sitemap_url, forums)
 
+    if search:
+        render_search(env, out, site_name=site_name)
+
     db.close()
+
+    if search:
+        run_pagefind(out)
+
     logger.info("Done. Output: %s", out)
 
 
@@ -1278,6 +1309,13 @@ def main() -> None:
                               "archive generates is relative so it works at any path; sitemap "
                               "entries can't be, which is why this needs an explicit absolute URL "
                               "rather than being inferred. Omit for no sitemap/robots.txt.")
+    parser.add_argument("--search", action="store_true",
+                         help="Add a dedicated search.html (linked from every page's breadcrumb "
+                              "bar) indexing every generated page with Pagefind, a static "
+                              "client-side search engine — no server required, same as the rest "
+                              "of the archive. Requires the pagefind[bin] package (see "
+                              "generator/requirements.txt) and runs it as a subprocess after "
+                              "every other page is written. Off by default.")
     args = parser.parse_args()
     if args.missing_avatars:
         find_missing_avatars(args.dump, args.output, args.avatar_overrides)
@@ -1288,7 +1326,7 @@ def main() -> None:
     else:
         generate(args.dump, args.output, args.avatar_overrides, args.exclude, args.url_mirrors,
                  args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
-                 args.announcement, args.sitemap_url)
+                 args.announcement, args.sitemap_url, args.search)
 
 
 if __name__ == "__main__":

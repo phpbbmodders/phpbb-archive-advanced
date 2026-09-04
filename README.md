@@ -33,7 +33,7 @@ Then run the generator:
 
 That's it. Open `output/index.html` in a browser to browse the archive. `generate.sh` wraps the same command and sets up `.venv` for you if it doesn't exist yet.
 
-Attachments, avatars, and `[img]`-tagged images that are missing or fail to decode are dropped from the archive rather than left as broken links. Attachments/avatars/external images that only exist as external URLs (remote avatars, hotlinked signature images) are downloaded once and cached locally so the archive stays self-contained — a URL that's genuinely dead just gets skipped, and is retried again on every future run (see `--incremental` below if that's not what you want).
+Attachments, avatars, and `[img]`-tagged images that are missing or fail to decode are dropped from the archive rather than left as broken links. Attachments/avatars/external images that only exist as external URLs (remote avatars, hotlinked signature images) are downloaded once and cached locally so the archive stays self-contained — a URL that's genuinely dead just gets skipped, and is retried again on every future run (see `--incremental` below if that's not what you want). Every post/attachment/avatar image is marked `loading="lazy"`, so a long thread with dozens of embedded images doesn't force the browser to fetch all of them up front.
 
 ## Usage
 
@@ -47,7 +47,7 @@ usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--url-mirrors FILE] [-i] [--incremental]
                    [--ignore-hosts FILE] [--attachment-recovery DIR]
                    [--style-css FILE] [--announcement FILE]
-                   [--sitemap-url URL]
+                   [--sitemap-url URL] [--search]
 
 Generate a static HTML archive from a phpBB MySQL dump
 
@@ -126,6 +126,14 @@ options:
                         sitemap entries can't be, which is why this needs an
                         explicit absolute URL rather than being inferred. Omit
                         for no sitemap/robots.txt.
+  --search              Add a dedicated search.html (linked from every page's
+                        breadcrumb bar) indexing every generated page with
+                        Pagefind, a static client-side search engine — no
+                        server required, same as the rest of the archive.
+                        Requires the pagefind[bin] package (see
+                        generator/requirements.txt) and runs it as a
+                        subprocess after every other page is written. Off by
+                        default.
 ```
 
 ### Fixing avatars the generator can't fetch on its own
@@ -208,6 +216,18 @@ The file is plain BBCode text, parsed the same way post content is:
 
 Every other link the archive generates is relative, so it works at any path — but sitemap entries have to be absolute URLs, which is why this flag needs the full deployment URL rather than inferring it. Excluded forums/topics are already left out of `output/` entirely, so they're never in the sitemap either.
 
+### Full-text search
+
+`--search` adds `search.html` (linked from every page's breadcrumb bar) and indexes every generated page with [Pagefind](https://pagefind.app/), a static client-side search engine — no server, no external service, same self-contained philosophy as the rest of the archive:
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/ --search
+```
+
+Requires the `pagefind[bin]` package (already in `generator/requirements.txt`) — it ships a real compiled search binary via pip, no Node.js needed. The generator runs it as a subprocess after every other page is written, so search results always reflect the current run.
+
+Result titles come from a `data-pagefind-meta="title:..."` attribute the archive sets on every page's `<body>` — without it, Pagefind defaults to each page's first `<h1>`, which on this archive is always just the site name, making every search result look identical. `search.html` itself is excluded from the index (`data-pagefind-ignore`) since it has no content of its own, just the search widget.
+
 ## What gets generated
 
 ```
@@ -218,7 +238,9 @@ output/
 ├── users/<id>.html     # User profile pages
 ├── assets/             # CSS, images, smilies, avatars, attachments
 ├── sitemap.xml          # Only with --sitemap-url
-└── robots.txt           # Only with --sitemap-url
+├── robots.txt            # Only with --sitemap-url
+├── search.html           # Only with --search
+└── pagefind/              # Only with --search — search index and widget
 ```
 
 All links are relative, so the archive works at any path — subdirectory, GitHub Pages project site, or offline from disk.

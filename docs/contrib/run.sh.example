@@ -1,16 +1,18 @@
 #!/usr/bin/bash
 set -Eeuo pipefail
 
-# Regenerates the static archive with every fix/feature this deployment
-# needs wired in: igorw's avatar override, the phpbbmodders.net
-# userbar/rank-image and rmcgirr83.org smilie mirrors, recovery of
-# corrupted attachments from the dump/qustionabl/ backup, skipping
-# known-dead hosts (known-dead-hosts.json) without a network attempt,
-# excluding the Team category (config/exclude.json) from the archive
-# entirely, a stylesheet (config/phpbbmodders-style.css) approximating
-# the live board's own color scheme, and a board-wide notice
+# Regenerates the static archive with every accumulated fix/feature from
+# today's session already wired in: igorw's avatar override, the
+# phpbbmodders.net userbar/rank-image and rmcgirr83.org smilie mirrors,
+# recovery of corrupted attachments from the dump/qustionabl/ backup,
+# skipping known-dead hosts (known-dead-hosts.json) without a network
+# attempt, excluding the Team category (config/exclude.json) from the
+# archive entirely, a stylesheet (config/phpbbmodders-style.css)
+# approximating the live board's own color scheme, a board-wide notice
 # (config/announcement.txt) — empty by default, so nothing renders
-# until it's filled in. --incremental keeps previously-downloaded
+# until it's filled in — a sitemap.xml/robots.txt for
+# https://phpbbmodders.net/, and full-text search (search.html, via
+# Pagefind). --incremental keeps previously-downloaded
 # attachments/avatars/external images across runs instead of
 # re-fetching everything.
 #
@@ -35,4 +37,6 @@ fi
     --exclude config/exclude.json \
     --style-css config/phpbbmodders-style.css \
     --announcement config/announcement.txt \
+    --sitemap-url https://phpbbmodders.net/ \
+    --search \
     "${extra_args[@]}"

@@ -17,6 +17,8 @@ Everything below was added on top of matildepark's original 4 commits (`b079b39`
 | `--attachment-recovery DIR` | A separately-collected backup (same layout as an attachment source) checked for a working copy of any attachment missing/corrupted in the main dump |
 | `--style-css FILE` | Replaces the built-in neutral stylesheet with a custom one — see below |
 | `--announcement FILE` | Shows a notice on index/forum/topic pages — see below |
+| `--sitemap-url URL` | Writes `sitemap.xml`/`robots.txt` for that absolute base URL — see below |
+| `--search` | Adds `search.html`, indexed with Pagefind — see below |
 
 ## Corrupted and missing content
 
@@ -25,6 +27,8 @@ Everything below was added on top of matildepark's original 4 commits (`b079b39`
 - **External images**: `[img]`/`<IMG>` URLs in posts, signatures, and forum descriptions are downloaded and cached locally (`download_external_images()`) so the archive stays self-contained, rather than linking out to URLs that will eventually rot.
 - **Missing post/topic content**: if a topic's post rows are missing from the dump entirely, or just its opening post, `topic.html` says so explicitly instead of silently rendering an empty or truncated thread.
 - **Attachment path flattening**: some dumps end up with attachments duplicated in stray nested subdirectories from how they were originally collected; `copy_assets()` flattens by basename, keeping the shallowest copy on a name collision.
+- **Malformed `[img]` tags from a botched phpBB2→3.x migration**: a board that started on phpBB2 can end up with literal `[img]`/`[/img]` bracket text left in the stored XML markup around content a *different* auto-conversion pass already touched, instead of a proper `<IMG>` element — three shapes found on a real board (665/4/277 posts): `[img]<URL url="X">...</URL>[/img]` (sometimes with stray characters on either side — a trailing `.`, or a mangled `ttp://` fragment where the migration also dropped the leading `h`), `[img]<ATTACHMENT ...>...</ATTACHMENT>[/img]`, and a bare `[img]url[/img]` never converted at all, typically nested inside an already-correctly-converted `<URL>` link (phpBB's "clickable thumbnail" pattern). All three resolve the same way the existing `<IMG>` handling does; the bare-URL case is scoped to content that's *exactly* a URL, so it can't match posts that merely discuss `[img]` as text (verified against real posts quoting phpBB's own BBCode config array, and one describing an unrelated bug inside a `[code]` block).
+- **Lazy-loaded images**: every post/attachment/avatar `<img>` is marked `loading="lazy"`, so a long thread with dozens of embedded images doesn't force the browser to fetch all of them up front.
 
 ## Private-forum exclusion
 
@@ -49,9 +53,19 @@ The archive's own simple layout ships with a neutral default palette (`generator
 
 `docs/contrib/announcement.txt.example` is a worked example of the expected format.
 
+## Sitemap and robots.txt (`--sitemap-url`)
+
+Writes `output/sitemap.xml` (index, every forum, every topic, each with a `<lastmod>` from its most recent post) and `output/robots.txt` pointing at it. Requires an absolute base URL because sitemap entries must be absolute, unlike every other link the archive generates, which stays relative so the archive works at any path. Excluded forums/topics are already left out of `output/` entirely, so they're never in the sitemap either.
+
+## Full-text search (`--search`)
+
+Adds `search.html` (linked from every page's breadcrumb bar) and indexes every generated page with Pagefind, a static client-side search engine, via the `pagefind[bin]` Python package — a real compiled search binary installed through pip, no Node.js needed. Runs as a subprocess after every other page is written.
+
+Result titles come from a `data-pagefind-meta="title:..."` attribute set on every page's `<body>` (via a new `body_attrs` template block in `base.html`) — without it, Pagefind defaults to each page's first `<h1>`, which on this archive is always just the site name, making every search result look identical. `search.html` itself is excluded from the index (`data-pagefind-ignore`) since it has no content of its own. The widget is re-themed via its own documented CSS custom properties (`--pagefind-ui-primary` etc.) rather than by fighting its markup — `docs/contrib/phpbbmodders-style.css.example`'s `#search` block is a real worked example.
+
 ## `docs/contrib/`
 
-Real-world starting points for `--ignore-hosts`, `--style-css`, and `--announcement`, with its own README explaining what pairs with what. All four files follow a `<name>.<ext>.example` naming convention. `known-dead-hosts.json.example` seeds a fixed live filename (`known-dead-hosts.json`, gitignored, conventionally kept at the repo root — see `.gitignore`); `phpbbmodders-style.css.example` and `announcement.txt.example` don't — `--style-css`/`--announcement` take an arbitrary path, so a live copy can go anywhere, or the example can be pointed at directly. `known-dead-hosts.json.example`'s hostnames (parked domains, shut-down image hosts) were confirmed dead against a real dump, not a generic guess. `run.sh.example` is a fourth file, pairing with no single flag — it's phpbbmodders.net's real wrapper script, showing how every flag composes into one command.
+Real-world starting points for `--ignore-hosts`, `--style-css`, and `--announcement`, with its own README explaining what pairs with what. All files follow a `<name>.<ext>.example` naming convention. `known-dead-hosts.json.example` seeds a fixed live filename (`known-dead-hosts.json`, gitignored, conventionally kept at the repo root — see `.gitignore`); `phpbbmodders-style.css.example` and `announcement.txt.example` don't — `--style-css`/`--announcement` take an arbitrary path, so a live copy can go anywhere, or the example can be pointed at directly. `known-dead-hosts.json.example`'s hostnames (parked domains, shut-down image hosts, or previously misclassified ones corrected after direct verification) were confirmed dead against a real dump, not a generic guess. `run.sh.example` pairs with no single flag — it's phpbbmodders.net's real wrapper script, showing how every flag composes into one command.
 
 ## Operational fixes
 
@@ -60,4 +74,4 @@ Real-world starting points for `--ignore-hosts`, `--style-css`, and `--announcem
 
 ## README
 
-Rewritten to document every flag above, keep the usage/options block synchronized with actual `--help` output (this also fixed a pre-existing gap: `--ignore-hosts` and `--attachment-recovery` had been implemented but never documented), and add worked examples for `--exclude`, `--url-mirrors`, `--style-css`, and `--announcement`.
+Rewritten to document every flag above, keep the usage/options block synchronized with actual `--help` output (this also fixed a pre-existing gap: `--ignore-hosts` and `--attachment-recovery` had been implemented but never documented), and add worked examples for `--exclude`, `--url-mirrors`, `--style-css`, `--announcement`, `--sitemap-url`, and `--search`.
