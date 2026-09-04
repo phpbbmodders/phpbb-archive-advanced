@@ -32,12 +32,12 @@
       </div>
       {% endif %}
       {% if author.rank_title %}
-      <div class="rank-title" style="font-size:0.82em;color:#555">{{ author.rank_title | e }}</div>
+      <div class="rank-title" style="font-size:0.95em;color:#555">{{ author.rank_title | e }}</div>
       {% endif %}
       {% if author.rank_image %}
       <div class="rank-img"><img src="{{ root }}assets/images/ranks/{{ author.rank_image }}" alt="rank"></div>
       {% endif %}
-      <div style="font-size:0.8em;color:#777;margin-top:4px">
+      <div style="font-size:0.95em;color:#777;margin-top:4px">
         Posts: {{ author.user_posts }}<br>
         Joined: {{ author.user_regdate | timestamp }}
       </div>

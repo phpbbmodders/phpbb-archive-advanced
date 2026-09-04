@@ -111,13 +111,13 @@ table.topic-table td.lastpost { font-size: 0.85em; color: #555; }
   border-right: 1px solid #B3C0D8;
   background: #EAF0F8;
   color: #536482;
-  font-size: 0.85em;
+  font-size: 0.9em;
   flex-shrink: 0;
 }
 .postprofile strong { color: #000; display: block; margin-bottom: 4px; font-size: 1.05em; }
 .postprofile a { color: #2E6EA6; }
 .postprofile .user-avatar img { max-width: 90px; max-height: 90px; display: block; margin: 4px auto 6px; }
-.postprofile .rank-img img { max-width: 80px; display: block; margin: 2px 0; }
+.postprofile .rank-img img { max-width: 120px; display: block; margin: 2px 0; }
 .postbody { padding: 8px 12px; vertical-align: top; flex: 1; min-width: 0; }
 .post-date { font-size: 0.85em; color: #666; margin-bottom: 6px; border-bottom: 1px solid #D1D7E3; padding-bottom: 4px; }
 .content { color: #333; max-width: 80ch; }
