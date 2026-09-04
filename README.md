@@ -47,6 +47,7 @@ usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--url-mirrors FILE] [-i] [--incremental]
                    [--ignore-hosts FILE] [--attachment-recovery DIR]
                    [--style-css FILE] [--announcement FILE]
+                   [--sitemap-url URL]
 
 Generate a static HTML archive from a phpBB MySQL dump
 
@@ -114,7 +115,17 @@ options:
                         a read-only archive.[/b]") to show as a notice on the
                         index, every forum page, and every topic page. Not
                         pulled from the dump — written fresh for the archive
-                        itself. Omit for no announcement.
+                        itself. Omit the flag, or leave the file blank, for no
+                        announcement.
+  --sitemap-url URL     Absolute base URL the archive will be hosted at (e.g.
+                        https://archive.example.com/) — writes
+                        output/sitemap.xml (index, every forum, every topic,
+                        with a lastmod date from the most recent post) and
+                        output/robots.txt pointing at it. Every other link the
+                        archive generates is relative so it works at any path;
+                        sitemap entries can't be, which is why this needs an
+                        explicit absolute URL rather than being inferred. Omit
+                        for no sitemap/robots.txt.
 ```
 
 ### Fixing avatars the generator can't fetch on its own
@@ -187,6 +198,16 @@ The file is plain BBCode text, parsed the same way post content is:
 [b]This board is now a read-only archive.[/b] Registration, posting, and private messaging have been disabled.
 ```
 
+### Sitemap and robots.txt
+
+`--sitemap-url` writes `output/sitemap.xml` (index, every forum, every topic — each with a `<lastmod>` from its most recent post) and `output/robots.txt` pointing at it:
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/ --sitemap-url https://your-archive.example.com/
+```
+
+Every other link the archive generates is relative, so it works at any path — but sitemap entries have to be absolute URLs, which is why this flag needs the full deployment URL rather than inferring it. Excluded forums/topics are already left out of `output/` entirely, so they're never in the sitemap either.
+
 ## What gets generated
 
 ```
@@ -195,7 +216,9 @@ output/
 ├── forums/<id>.html    # One page per forum (topic list)
 ├── topics/<id>.html    # One page per thread (all posts)
 ├── users/<id>.html     # User profile pages
-└── assets/             # CSS, images, smilies, avatars, attachments
+├── assets/             # CSS, images, smilies, avatars, attachments
+├── sitemap.xml          # Only with --sitemap-url
+└── robots.txt           # Only with --sitemap-url
 ```
 
 All links are relative, so the archive works at any path — subdirectory, GitHub Pages project site, or offline from disk.

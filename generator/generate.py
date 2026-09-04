@@ -9,6 +9,7 @@ Usage:
 
 import argparse
 import datetime
+import html
 import json
 import logging
 import os
@@ -935,6 +936,59 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
     logger.info("Rendered %d user pages", len(db.get_all_users()))
 
 
+def render_sitemap(out: Path, db: PhpbbDatabase, site_url: str, forums: list[dict]) -> None:
+    """Write output/sitemap.xml and output/robots.txt. site_url is the
+    absolute base URL the archive will be hosted at (e.g.
+    "https://archive.example.com/") — required because sitemap entries
+    must be absolute, unlike every other link the archive generates,
+    which stays relative so the archive can be hosted at any path."""
+    if not site_url.endswith("/"):
+        site_url += "/"
+
+    def iso_date(ts: int | None) -> str | None:
+        if not ts:
+            return None
+        return datetime.datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d")
+
+    urls: list[tuple[str, str | None]] = []
+
+    latest = max((f.get("forum_last_post_time") or 0 for f in forums), default=0)
+    urls.append((f"{site_url}index.html", iso_date(latest)))
+
+    renderable_forums = [f for f in forums if f.get("forum_type") in (0, 1)]
+    for forum in renderable_forums:
+        urls.append((
+            f"{site_url}forums/{forum['forum_id']}.html",
+            iso_date(forum.get("forum_last_post_time")),
+        ))
+
+    for forum in renderable_forums:
+        if forum.get("forum_type") != 1:
+            continue
+        for topic in db.get_topics(forum["forum_id"]):
+            urls.append((
+                f"{site_url}topics/{topic['topic_id']}.html",
+                iso_date(topic.get("topic_last_post_time")),
+            ))
+
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for loc, lastmod in urls:
+        lines.append("  <url>")
+        lines.append(f"    <loc>{html.escape(loc)}</loc>")
+        if lastmod:
+            lines.append(f"    <lastmod>{lastmod}</lastmod>")
+        lines.append("  </url>")
+    lines.append("</urlset>")
+    (out / "sitemap.xml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    logger.info("Rendered sitemap.xml (%d URLs)", len(urls))
+
+    (out / "robots.txt").write_text(
+        f"User-agent: *\nAllow: /\n\nSitemap: {site_url}sitemap.xml\n", encoding="utf-8"
+    )
+    logger.info("Rendered robots.txt")
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -987,7 +1041,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
              exclude_path: str | None = None, url_mirrors_path: str | None = None,
              incremental: bool = False, ignored_hosts_path: str | None = None,
              attachment_recovery_dir: str | None = None, style_css_path: str | None = None,
-             announcement_path: str | None = None) -> None:
+             announcement_path: str | None = None, sitemap_url: str | None = None) -> None:
     out = Path(output_dir)
     if out.exists():
         if incremental:
@@ -1077,6 +1131,9 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     render_forums(env, out, db, users, shared_parser, forums, site_name=site_name, announcement_html=announcement_html)
     render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name)
     render_index(env, out, forum_tree or [], total_posts, site_name=site_name, announcement_html=announcement_html)
+
+    if sitemap_url:
+        render_sitemap(out, db, sitemap_url, forums)
 
     db.close()
     logger.info("Done. Output: %s", out)
@@ -1213,6 +1270,14 @@ def main() -> None:
                               "forum page, and every topic page. Not pulled from the dump — "
                               "written fresh for the archive itself. Omit the flag, or leave the "
                               "file blank, for no announcement.")
+    parser.add_argument("--sitemap-url", metavar="URL",
+                         help="Absolute base URL the archive will be hosted at (e.g. "
+                              "https://archive.example.com/) — writes output/sitemap.xml (index, "
+                              "every forum, every topic, with a lastmod date from the most recent "
+                              "post) and output/robots.txt pointing at it. Every other link the "
+                              "archive generates is relative so it works at any path; sitemap "
+                              "entries can't be, which is why this needs an explicit absolute URL "
+                              "rather than being inferred. Omit for no sitemap/robots.txt.")
     args = parser.parse_args()
     if args.missing_avatars:
         find_missing_avatars(args.dump, args.output, args.avatar_overrides)
@@ -1223,7 +1288,7 @@ def main() -> None:
     else:
         generate(args.dump, args.output, args.avatar_overrides, args.exclude, args.url_mirrors,
                  args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
-                 args.announcement)
+                 args.announcement, args.sitemap_url)
 
 
 if __name__ == "__main__":
