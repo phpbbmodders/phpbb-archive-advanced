@@ -12,5 +12,8 @@ output/
 # Dump data (large, site-specific)
 dump/
 
+# User's live copy of the known-dead-hosts template (see .example file)
+known-dead-hosts.json
+
 # Internal
 .claude/

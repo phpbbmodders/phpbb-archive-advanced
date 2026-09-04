@@ -464,14 +464,23 @@ def _fetch_image(url: str, timeout: int = 10, url_mirrors: dict[str, Path] | Non
     import urllib.request
     from io import BytesIO
 
-    if ignored_hosts:
-        host = (urllib.parse.urlparse(url).hostname or "").lower()
-        if host and any(host == h or host.endswith(f".{h}") for h in ignored_hosts):
-            logger.warning("Image URL host is on the ignore list, skipping: %s", url)
-            return None
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if ignored_hosts and host and any(host == h or host.endswith(f".{h}") for h in ignored_hosts):
+        logger.warning("Image URL host is on the ignore list, skipping: %s", url)
+        return None
 
+    # A realistic browser UA + same-site Referer clears basic hotlink
+    # protection on otherwise-public images (e.g. Cloudflare's default bot
+    # rules) without attempting to defeat real access controls — nothing
+    # here handles auth, CAPTCHAs, or private/signed URLs.
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": f"{parsed.scheme}://{parsed.netloc}/",
+    }
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "phpbb-archive/1.0"})
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = resp.read()
     except (urllib.error.URLError, OSError) as e:
@@ -1105,9 +1114,11 @@ def check_images(dump_dir: str, output_dir: str, url_mirrors_path: str | None = 
 
     print(f"{len(urls) - len(failed)} of {len(urls)} external image URL(s) resolve.")
     if failed:
-        print(f"\n{len(failed)} unresolved (add these to --url-mirrors or accept they'll be dropped):")
-        for url in failed:
-            print(f"  {url}")
+        report_path = out / "unresolved_images.json"
+        report_path.write_text(json.dumps(failed, indent=2) + "\n", encoding="utf-8")
+        print(f"\n{len(failed)} unresolved — written to {report_path}")
+        print("A starting point: trim it down to URLs worth mirroring for --url-mirrors, or pull")
+        print("out hostnames that keep failing for --ignore-hosts. The rest will just be dropped.")
 
     db.close()
 
@@ -1141,7 +1152,8 @@ def main() -> None:
                               "you have direct filesystem access to its files.")
     parser.add_argument("-i", "--check-images", action="store_true",
                          help="List external [img]/<IMG> URLs that fail to resolve (via "
-                              "--url-mirrors or the network), instead of generating the archive — "
+                              "--url-mirrors or the network) and write them to "
+                              "output/unresolved_images.json, instead of generating the archive — "
                               "use ahead of a full run to see what needs mirroring")
     parser.add_argument("--incremental", action="store_true",
                          help="Keep previously-downloaded attachments/avatars/external images "

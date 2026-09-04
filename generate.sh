@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 # Generates the static HTML archive from dump/ using phpbb-archive's own
 # generator (generator/generate.py), creating and reusing a local .venv
-# for its one dependency (Jinja2) rather than installing it system-wide.
+# for its dependencies rather than installing them system-wide.
 #
 # Usage:
 #   generate.sh
@@ -30,6 +30,15 @@ if [[ ! -d "$dump_dir" ]]; then
     echo "  $dump_dir" >&2
     echo "See README.md for what to collect into dump/." >&2
     exit 1
+fi
+
+if [[ -x "$venv_dir/bin/python" ]] && ! "$venv_dir/bin/pip" --version >/dev/null 2>&1; then
+    # A venv's console-script wrappers (pip, etc.) hardcode an absolute
+    # shebang path back to the venv itself at creation time, so copying or
+    # moving the containing folder silently breaks them even though the
+    # python binary/symlink keeps working. Recreate rather than fail.
+    echo "Existing virtual environment is broken (likely moved/copied from elsewhere) — recreating: $venv_dir"
+    rm -rf "$venv_dir"
 fi
 
 if [[ ! -x "$venv_dir/bin/python" ]]; then
