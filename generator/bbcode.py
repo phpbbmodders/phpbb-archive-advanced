@@ -154,8 +154,6 @@ class PhpbbBBCodeParser:
         text = re.sub(r'<QUOTE[^>]*author="([^"]*)"[^>]*>', r'<blockquote class="uncited"><div class="quote-header">\1 wrote:</div>', text)
         text = re.sub(r'<QUOTE[^>]*>', '<blockquote class="uncited">', text)
         text = re.sub(r'</QUOTE>', '</blockquote>', text)
-        text = re.sub(r'<URL url="([^"]*)"[^>]*>', r'<a href="\1" class="postlink">', text)
-        text = re.sub(r'</URL>', '</a>', text)
         # <IMG src="url">optional text</IMG> — capture src, discard inner
         # text; resolved against the locally cached copy, same as [img]
         # BBCode above. A dead or undecodable URL is dropped.
@@ -164,6 +162,48 @@ class PhpbbBBCodeParser:
             if not name:
                 return ''
             return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image">'
+
+        def replace_xml_img_url(url):
+            name = self.external_images.get(url.strip())
+            if not name:
+                return ''
+            return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image">'
+
+        # Migration artifacts from boards that started on phpBB2, where
+        # [img]...[/img] BBCode wasn't reconverted to a proper <IMG>
+        # element, leaving literal [img]/[/img] bracket text sitting
+        # around content that a *different* auto-conversion pass already
+        # touched. Three shapes seen in the wild (665/4/277 posts on a
+        # real board), all must run before the generic <URL> conversion
+        # below, which would otherwise absorb the first two:
+        #
+        # (a) [img]<URL url="X">...</URL>[/img] — the auto-linked bare
+        #     URL inside it, sometimes further wrapped in <LINK_TEXT> for
+        #     display shortening, sometimes with stray characters (seen:
+        #     a bare "." between </URL> and [/img]; a mangled leading
+        #     fragment like "ttp://" — a dropped "h" — between [img] and
+        #     <URL). The short bounded gaps on both sides still require
+        #     an actual <URL>...</URL> to follow, so this can't drift
+        #     into matching unrelated prose.
+        text = re.sub(r'\[img\][^<]{0,20}<URL url="([^"]*)"[^>]*>.*?</URL>[^\[]*?\[/img\]', replace_xml_img, text, flags=re.DOTALL)
+        # (b) [img]<ATTACHMENT ...>...</ATTACHMENT>[/img] — the inner
+        #     element already renders correctly on its own via the
+        #     <ATTACHMENT> handling further below; just drop the leftover
+        #     brackets around it rather than re-resolving it here.
+        text = re.sub(r'\[img\](<ATTACHMENT(?:\s[^>]*)?>.*?</ATTACHMENT>)[^\[]*?\[/img\]', r'\1', text, flags=re.DOTALL)
+        # (c) [img]bare-url[/img] never touched by any XML conversion at
+        #     all, typically sitting inside a <URL>...</URL> whose own
+        #     [url=...] wrapper WAS converted correctly (a link around an
+        #     image, phpBB's "clickable thumbnail" pattern). Scoped to
+        #     content that is *exactly* a bare URL and nothing else, so
+        #     this can never match a post that merely discusses "[img]"
+        #     as text (e.g. quoting phpBB's own BBCode config verbatim,
+        #     seen in the same dump) — such content never has a bare URL
+        #     as the sole span between the brackets.
+        text = re.sub(r'\[img\](https?://[^\s\[\]<>]+)\[/img\]', lambda m: replace_xml_img_url(m.group(1)), text)
+
+        text = re.sub(r'<URL url="([^"]*)"[^>]*>', r'<a href="\1" class="postlink">', text)
+        text = re.sub(r'</URL>', '</a>', text)
         text = re.sub(r'<IMG\s+src="([^"]*)"[^>]*>.*?</IMG>', replace_xml_img, text, flags=re.DOTALL)
         # Also handle self-closing form
         text = re.sub(r'<IMG\s+src="([^"]*)"[^>]*/>', replace_xml_img, text)
