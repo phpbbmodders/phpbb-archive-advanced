@@ -1,45 +1,88 @@
 {% extends "base.html" %}
 {% block title %}Board Index - {{ site_name }}{% endblock %}
 
+{% macro forum_row(forum) %}
+<li class="row">
+  <div class="forum-title">
+    {% if forum.forum_type == 0 %}
+      <a href="{{ root }}forums/{{ forum.forum_id }}.html"><strong>{{ forum.forum_name | e }}</strong></a>
+    {% elif forum.forum_type == 2 %}
+      <a href="{{ forum.forum_link }}">{{ forum.forum_name | e }}</a>
+    {% else %}
+      <a href="{{ root }}forums/{{ forum.forum_id }}.html">{{ forum.forum_name | e }}</a>
+    {% endif %}
+    {% if forum.forum_desc %}<div class="forum-desc">{{ forum.forum_desc | safe }}</div>{% endif %}
+    {% set cat_children = forum.children | selectattr("forum_type", "equalto", 0) | list %}
+    {% set plain_children = forum.children | rejectattr("forum_type", "equalto", 0) | list %}
+    {% if plain_children %}
+    <div class="forum-desc">Sub-forums:
+      {% for sub in plain_children %}
+        {% if sub.forum_type == 2 %}<a href="{{ sub.forum_link }}">{{ sub.forum_name | e }}</a>
+        {% else %}<a href="{{ root }}forums/{{ sub.forum_id }}.html">{{ sub.forum_name | e }}</a>{% endif %}{% if not loop.last %}, {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if cat_children %}
+    <ul class="topiclist forums" style="margin:4px 0 0 16px">
+      {% for child in cat_children %}{{ forum_row(child) }}{% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% if forum.forum_type == 1 %}
+  <span class="col-count">{{ forum.forum_topics_approved }}</span>
+  <span class="col-count">{{ forum.forum_posts_approved }}</span>
+  <span class="col-lastpost">
+    {% if forum.forum_last_poster_name %}
+      {% if forum.forum_last_topic_id %}
+        <a href="{{ root }}topics/{{ forum.forum_last_topic_id }}.html#p{{ forum.forum_last_post_id }}">{{ forum.forum_last_post_subject | e }}</a><br>
+      {% endif %}
+      by {{ forum.forum_last_poster_name | e }}<br>
+      {{ forum.forum_last_post_time | timestamp }}
+    {% endif %}
+  </span>
+  {% else %}
+  <span class="col-count"></span>
+  <span class="col-count"></span>
+  <span class="col-lastpost"></span>
+  {% endif %}
+</li>
+{% endmacro %}
+
 {% block content %}
 {% for forum in forum_tree %}
+{% if forum.forum_type == 0 %}
 <div class="forabg">
   <div class="header">
-    <span>{{ forum.forum_name | e }}</span>
-    <span class="col-count">Topics</span>
-    <span class="col-count">Posts</span>
+    <span class="header-title"><a href="{{ root }}forums/{{ forum.forum_id }}.html">{{ forum.forum_name | e }}</a></span>
+    <div class="header-cols">
+      <span class="col-count">Topics</span>
+      <span class="col-count">Posts</span>
+      <span class="col-lastpost"></span>
+    </div>
   </div>
   <ul class="topiclist forums">
-    {% for child in forum.children %}
-    <li class="row">
-      <div class="forum-title">
-        <a href="{{ root }}forums/{{ child.forum_id }}.html">{{ child.forum_name | e }}</a>
-        {% if child.forum_desc %}<div class="forum-desc">{{ child.forum_desc | safe }}</div>{% endif %}
-        {% if child.children %}
-        <div class="forum-desc">Sub-forums:
-          {% for sub in child.children %}
-            <a href="{{ root }}forums/{{ sub.forum_id }}.html">{{ sub.forum_name | e }}</a>{% if not loop.last %}, {% endif %}
-          {% endfor %}
-        </div>
-        {% endif %}
-      </div>
-      <span class="col-count">{{ child.forum_topics_approved }}</span>
-      <span class="col-count">{{ child.forum_posts_approved }}</span>
-      <span class="col-lastpost">
-        {% if child.forum_last_poster_name %}
-          {% if child.forum_last_topic_id %}
-            <a href="{{ root }}topics/{{ child.forum_last_topic_id }}.html#p{{ child.forum_last_post_id }}">{{ child.forum_last_post_subject | e }}</a><br>
-          {% endif %}
-          by {{ child.forum_last_poster_name | e }}<br>
-          {{ child.forum_last_post_time | timestamp }}
-        {% endif %}
-      </span>
-    </li>
-    {% else %}
+    {% for child in forum.children %}{{ forum_row(child) }}{% else %}
     <li class="row"><span style="color:#999">No forums.</span></li>
     {% endfor %}
   </ul>
 </div>
+{% else %}
+{# A regular forum or link sitting directly at the board root (no parent category) —
+   give it a generic "Forum" header so it looks consistent with the category blocks #}
+<div class="forabg">
+  <div class="header">
+    <span class="header-title">Forum</span>
+    <div class="header-cols">
+      <span class="col-count">Topics</span>
+      <span class="col-count">Posts</span>
+      <span class="col-lastpost"></span>
+    </div>
+  </div>
+  <ul class="topiclist forums">
+    {{ forum_row(forum) }}
+  </ul>
+</div>
+{% endif %}
 {% else %}
 <p>No forums found.</p>
 {% endfor %}

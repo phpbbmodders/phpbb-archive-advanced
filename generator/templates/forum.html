@@ -6,10 +6,44 @@
 {% endblock %}
 
 {% block content %}
+{% if sub_forums %}
+<div class="forumbg" style="margin-bottom:10px">
+  <div class="header">
+    <span class="header-title">Sub-forums</span>
+    <div class="header-cols">
+      <span class="col-count">Topics</span>
+      <span class="col-count">Posts</span>
+    </div>
+  </div>
+  <ul class="topiclist forums">
+    {% for sub in sub_forums %}
+    <li class="row">
+      <div class="forum-title">
+        {% if sub.forum_type == 2 %}
+          <a href="{{ sub.forum_link }}">{{ sub.forum_name | e }}</a>
+        {% else %}
+          <a href="{{ root }}forums/{{ sub.forum_id }}.html">{{ sub.forum_name | e }}</a>
+        {% endif %}
+      </div>
+      {% if sub.forum_type == 1 %}
+      <span class="col-count">{{ sub.forum_topics_approved }}</span>
+      <span class="col-count">{{ sub.forum_posts_approved }}</span>
+      {% else %}
+      <span class="col-count"></span>
+      <span class="col-count"></span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% if not is_category %}
 <div class="forumbg">
   <div class="header">
-    <span style="flex:1">{{ forum.forum_name | e }}</span>
-    <span class="col-count">Posts</span>
+    <span class="header-title">{{ forum.forum_name | e }}</span>
+    <div class="header-cols">
+      <span class="col-count">Posts</span>
+    </div>
   </div>
   {% if forum.forum_desc %}<div style="padding:4px 10px 6px; font-size:0.85em; color:#555; border-bottom:1px solid #D9BFB7;">{{ forum.forum_desc | safe }}</div>{% endif %}
 
@@ -40,6 +74,14 @@
   <div style="padding:8px 10px; color:#999;">No topics in this forum.</div>
   {% endif %}
 </div>
+{% else %}
+<div class="forumbg">
+  <div class="header">
+    <span class="header-title">{{ forum.forum_name | e }}</span>
+  </div>
+  {% if forum.forum_desc %}<div style="padding:4px 10px 6px; font-size:0.85em; color:#555;">{{ forum.forum_desc | safe }}</div>{% endif %}
+</div>
+{% endif %}
 {% endblock %}
 
-{% block footer_note %}{{ topics | length }} topic(s){% endblock %}
+{% block footer_note %}{% if is_category %}{{ sub_forums | length }} sub-forum(s){% else %}{{ topics | length }} topic(s){% endif %}{% endblock %}

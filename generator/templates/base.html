@@ -34,21 +34,6 @@ hr { border: 0; border-top: 1px solid #B3C0D8; }
 #page-header h1 a:hover { text-decoration: none; color: #D1E8FF; }
 #page-header .site-desc { color: #A8C4E0; font-size: 0.9em; margin: 2px 0 0; }
 
-/* ── navbar ── */
-#page-nav {
-  background: #2B4C7E;
-  border-bottom: 2px solid #1A3660;
-  color: #fff;
-  padding: 4px 12px;
-  font-size: 0.9em;
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-#page-nav a { color: #D1E8FF; }
-#page-nav a:hover { color: #fff; text-decoration: none; }
-
 /* ── breadcrumb ── */
 .breadcrumb {
   font-size: 0.9em;
@@ -70,12 +55,21 @@ hr { border: 0; border-top: 1px solid #B3C0D8; }
   padding: 6px 10px;
   font-weight: bold;
   color: #536482;
-  display: flex;
-  gap: 8px;
   background: #D1D7E3;
   border-bottom: 1px solid #B3C0D8;
 }
 .forabg .header a { color: #536482; }
+.forabg .header .header-title, .forumbg .header .header-title { display: block; }
+.forabg .header .header-cols, .forumbg .header .header-cols {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  font-weight: normal;
+  font-size: 0.85em;
+  margin-top: 3px;
+}
+.forabg .header .header-cols .col-count, .forumbg .header .header-cols .col-count { min-width: 60px; text-align: right; }
+.forabg .header .header-cols .col-lastpost, .forumbg .header .header-cols .col-lastpost { min-width: 180px; max-width: 180px; }
 ul.topiclist { list-style: none; margin: 0; padding: 0; }
 ul.topiclist.forums { background: #fff; }
 ul.topiclist li.row {
@@ -195,10 +189,6 @@ details.spoiler summary { cursor: pointer; color: #2E6EA6; }
 <div id="page-header">
   <h1><a class="no-bracket" href="{{ root }}index.html">{{ site_name }}</a></h1>
   <p class="site-desc">Static archive</p>
-</div>
-
-<div id="page-nav">
-  <a href="{{ root }}index.html">? Board index</a>
 </div>
 
 <div id="page-body">

@@ -17,6 +17,17 @@
     </td>
   </tr>
   {% endif %}
+  {% if user.user_custom_title or rank %}
+  <tr>
+    <td><strong>Rank</strong></td>
+    <td>
+      {{ (user.user_custom_title or rank.rank_title) | e }}
+      {% if rank and rank.rank_image %}
+      <br><img src="{{ assets }}/images/ranks/{{ rank.rank_image }}" alt="{{ (user.user_custom_title or rank.rank_title) | e }}">
+      {% endif %}
+    </td>
+  </tr>
+  {% endif %}
   <tr>
     <td><strong>Username</strong></td>
     <td>{{ user.username | e }}</td>
@@ -29,17 +40,6 @@
     <td><strong>Posts</strong></td>
     <td>{{ user.user_posts }}</td>
   </tr>
-  {% if user.user_custom_title or rank %}
-  <tr>
-    <td><strong>Rank</strong></td>
-    <td>
-      {{ (user.user_custom_title or rank.rank_title) | e }}
-      {% if rank and rank.rank_image %}
-      <br><img src="{{ assets }}/images/ranks/{{ rank.rank_image }}" alt="{{ (user.user_custom_title or rank.rank_title) | e }}">
-      {% endif %}
-    </td>
-  </tr>
-  {% endif %}
   {% if user.user_sig %}
   <tr>
     <td><strong>Signature</strong></td>

@@ -9,6 +9,14 @@
 {% block content %}
 <h2>{{ topic.topic_title | e }}</h2>
 
+{% if not posts %}
+<div style="padding:12px; color:#999; font-style:italic;">This topic's post content is missing from the source database and could not be recovered.</div>
+{% endif %}
+
+{% if posts and posts[0].post_id != topic.topic_first_post_id %}
+<div style="padding:8px 12px; color:#999; font-style:italic; border-bottom:1px solid #D1D7E3; margin-bottom:8px;">The opening post of this topic is missing from the source database and could not be recovered. Showing the remaining posts below.</div>
+{% endif %}
+
 {% for post in posts %}
 {% set author = post.author %}
 <div class="post-wrap" id="p{{ post.post_id }}">
