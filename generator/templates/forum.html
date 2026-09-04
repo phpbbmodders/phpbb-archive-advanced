@@ -6,6 +6,7 @@
 {% endblock %}
 
 {% block content %}
+{% if announcement_html %}<div class="announcement">{{ announcement_html | safe }}</div>{% endif %}
 {% if sub_forums %}
 <div class="forumbg" style="margin-bottom:10px">
   <div class="header">
@@ -45,7 +46,7 @@
       <span class="col-count">Posts</span>
     </div>
   </div>
-  {% if forum.forum_desc %}<div style="padding:4px 10px 6px; font-size:0.85em; color:#555; border-bottom:1px solid #D9BFB7;">{{ forum.forum_desc | safe }}</div>{% endif %}
+  {% if forum.forum_desc %}<div class="forum-description">{{ forum.forum_desc | safe }}</div>{% endif %}
 
   {% if topics %}
   <ul class="topiclist forums">
@@ -79,7 +80,7 @@
   <div class="header">
     <span class="header-title">{{ forum.forum_name | e }}</span>
   </div>
-  {% if forum.forum_desc %}<div style="padding:4px 10px 6px; font-size:0.85em; color:#555;">{{ forum.forum_desc | safe }}</div>{% endif %}
+  {% if forum.forum_desc %}<div class="forum-description forum-description--no-border">{{ forum.forum_desc | safe }}</div>{% endif %}
 </div>
 {% endif %}
 {% endblock %}

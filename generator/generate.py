@@ -203,12 +203,23 @@ def _rewrite_css_imports(css_path: Path) -> None:
     css_path.write_text(content, encoding="utf-8")
 
 
-def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: set[str] | None = None) -> None:
+def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: set[str] | None = None,
+                 style_css_path: str | None = None) -> None:
     """Copy CSS, images, smilies, avatars, and attachments into output/assets/.
     Attachments in excluded_physical_filenames (see load_exclusions) are
     skipped entirely rather than copied and left unlinked."""
     assets = output_dir / "assets"
     assets.mkdir(parents=True, exist_ok=True)
+
+    # --- Archive's own stylesheet ---
+    # Every page links assets/style.css rather than inlining it, so
+    # re-theming an already-built archive is a matter of dropping in a
+    # new assets/style.css — no regeneration required. Defaults to the
+    # tool's neutral built-in palette; --style-css overrides it with a
+    # site-specific one (e.g. colors approximating a live board's own
+    # theme) without changing anyone else's default output.
+    own_style = Path(style_css_path) if style_css_path else Path(__file__).parent / "static" / "style.css"
+    shutil.copy2(own_style, assets / "style.css")
 
     # --- CSS from prosilver theme ---
     # Keep CSS files at assets/ root (not assets/css/) so that their
@@ -741,7 +752,8 @@ def process_forum_descs(forums: list[dict], parser: PhpbbBBCodeParser) -> list[d
 
 
 def render_index(env: jinja2.Environment, out: Path, forum_tree: list[dict],
-                 total_posts: int, site_name: str = "") -> None:
+                 total_posts: int, site_name: str = "",
+                 announcement_html: str | None = None) -> None:
     tmpl = env.get_template("index.html")
     html = tmpl.render(
         page_title="Board Index",
@@ -750,6 +762,7 @@ def render_index(env: jinja2.Environment, out: Path, forum_tree: list[dict],
         assets="assets",
         root="",
         site_name=site_name,
+        announcement_html=announcement_html,
     )
     (out / "index.html").write_text(html, encoding="utf-8")
     logger.info("Rendered index.html")
@@ -757,7 +770,8 @@ def render_index(env: jinja2.Environment, out: Path, forum_tree: list[dict],
 
 def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   users: dict[int, dict], parser: PhpbbBBCodeParser,
-                  forums: list[dict], site_name: str = "") -> None:
+                  forums: list[dict], site_name: str = "",
+                  announcement_html: str | None = None) -> None:
     forums_dir = out / "forums"
     forums_dir.mkdir(exist_ok=True)
     tmpl = env.get_template("forum.html")
@@ -790,6 +804,7 @@ def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
             assets="../assets",
             root="../",
             site_name=site_name,
+            announcement_html=announcement_html,
         )
         (forums_dir / f"{forum['forum_id']}.html").write_text(html, encoding="utf-8")
 
@@ -802,7 +817,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   forums: list[dict], bad_attachments: set[str],
                   bad_avatars: set[str], remote_avatar_exts: dict[int, str],
                   avatar_overrides: dict[int, str], external_images: dict[str, str],
-                  site_name: str = "") -> int:
+                  site_name: str = "", announcement_html: str | None = None) -> int:
     """Render all topic pages. Returns total post count."""
     topics_dir = out / "topics"
     topics_dir.mkdir(exist_ok=True)
@@ -870,6 +885,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
             assets="../assets",
             root="../",
             site_name=site_name,
+            announcement_html=announcement_html,
         )
         (topics_dir / f"{topic['topic_id']}.html").write_text(html, encoding="utf-8")
 
@@ -924,7 +940,8 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
 # ---------------------------------------------------------------------------
 
 def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
-                              exclude_path: str | None = None) -> tuple[PhpbbDatabase, Path, Path, str, set[int]]:
+                              exclude_path: str | None = None,
+                              style_css_path: str | None = None) -> tuple[PhpbbDatabase, Path, Path, str, set[int]]:
     """Shared setup for generate() and find_missing_avatars(): import the
     dump into SQLite and copy assets/. Returns (db, dump, out, site_name,
     excluded_forum_ids)."""
@@ -961,7 +978,7 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
                     len(excluded_forum_ids), len(seed_ids), len(excluded_forum_ids))
 
     logger.info("Copying assets ...")
-    copy_assets(dump, out, excluded_physical_filenames)
+    copy_assets(dump, out, excluded_physical_filenames, style_css_path)
 
     return db, dump, out, site_name, excluded_forum_ids
 
@@ -969,7 +986,8 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
 def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None = None,
              exclude_path: str | None = None, url_mirrors_path: str | None = None,
              incremental: bool = False, ignored_hosts_path: str | None = None,
-             attachment_recovery_dir: str | None = None) -> None:
+             attachment_recovery_dir: str | None = None, style_css_path: str | None = None,
+             announcement_path: str | None = None) -> None:
     out = Path(output_dir)
     if out.exists():
         if incremental:
@@ -993,7 +1011,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
             logger.info("Clearing previous output: %s", out)
             shutil.rmtree(out)
 
-    db, dump, out, site_name, excluded_forum_ids = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path)
+    db, dump, out, site_name, excluded_forum_ids = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path)
 
     # --- Image attachments missing or corrupted in the source dump ---
     bad_attachments = find_bad_image_attachments(db, out)
@@ -1041,13 +1059,24 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
         post_id = f.get("forum_last_post_id") or 0
         f["forum_last_topic_id"] = db.get_post_topic_id(post_id) if post_id else None
 
+    # --- Board-wide announcement (optional) ---
+    # Plain BBCode text authored for the archive itself (e.g. "this board is
+    # now a read-only archive") rather than anything pulled from the dump —
+    # uid="" since there's no phpBB UID annotation to strip from hand-written
+    # text. Shown on index/forum/topic pages, not user profiles.
+    announcement_html = None
+    if announcement_path:
+        announcement_text = Path(announcement_path).read_text(encoding="utf-8")
+        if announcement_text.strip():
+            announcement_html = shared_parser.convert(announcement_text, uid="")
+
     # --- Pages ---
     forum_tree = prune_empty_categories(build_forum_tree(process_forum_descs(forums, shared_parser)))
 
-    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name)
-    render_forums(env, out, db, users, shared_parser, forums, site_name=site_name)
+    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name, announcement_html=announcement_html)
+    render_forums(env, out, db, users, shared_parser, forums, site_name=site_name, announcement_html=announcement_html)
     render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name)
-    render_index(env, out, forum_tree or [], total_posts, site_name=site_name)
+    render_index(env, out, forum_tree or [], total_posts, site_name=site_name, announcement_html=announcement_html)
 
     db.close()
     logger.info("Done. Output: %s", out)
@@ -1171,6 +1200,19 @@ def main() -> None:
                               "dump — e.g. a separately-collected backup that isn't affected by "
                               "the same corruption. A working copy found there replaces the "
                               "broken one instead of it being dropped.")
+    parser.add_argument("--style-css", metavar="FILE",
+                         help="Replace the archive's built-in neutral stylesheet with a custom "
+                              "one (e.g. colors approximating a specific board's own theme). "
+                              "Every page links assets/style.css rather than inlining it, so this "
+                              "file (or a hand-edited assets/style.css copy) can also just be "
+                              "dropped into an already-generated archive to re-theme it without "
+                              "regenerating anything. Omit to keep the default neutral palette.")
+    parser.add_argument("--announcement", metavar="FILE",
+                         help="Plain text file of BBCode (e.g. \"[b]This board is now a "
+                              "read-only archive.[/b]\") to show as a notice on the index, every "
+                              "forum page, and every topic page. Not pulled from the dump — "
+                              "written fresh for the archive itself. Omit the flag, or leave the "
+                              "file blank, for no announcement.")
     args = parser.parse_args()
     if args.missing_avatars:
         find_missing_avatars(args.dump, args.output, args.avatar_overrides)
@@ -1180,7 +1222,8 @@ def main() -> None:
         check_images(args.dump, args.output, args.url_mirrors, args.ignore_hosts)
     else:
         generate(args.dump, args.output, args.avatar_overrides, args.exclude, args.url_mirrors,
-                 args.incremental, args.ignore_hosts, args.attachment_recovery)
+                 args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
+                 args.announcement)
 
 
 if __name__ == "__main__":

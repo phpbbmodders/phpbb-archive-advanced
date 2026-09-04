@@ -49,6 +49,7 @@
 {% endmacro %}
 
 {% block content %}
+{% if announcement_html %}<div class="announcement">{{ announcement_html | safe }}</div>{% endif %}
 {% for forum in forum_tree %}
 {% if forum.forum_type == 0 %}
 <div class="forabg">

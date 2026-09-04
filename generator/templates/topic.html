@@ -7,6 +7,7 @@
 {% endblock %}
 
 {% block content %}
+{% if announcement_html %}<div class="announcement">{{ announcement_html | safe }}</div>{% endif %}
 <h2>{{ topic.topic_title | e }}</h2>
 
 {% if not posts %}
