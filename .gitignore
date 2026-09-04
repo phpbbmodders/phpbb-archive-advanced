@@ -12,7 +12,7 @@ output/
 # Dump data (large, site-specific)
 dump/
 
-# User's live copy of the known-dead-hosts template (see .example file)
+# User's live copy of the known-dead-hosts template (see docs/contrib/*.json.example)
 known-dead-hosts.json
 
 # Internal

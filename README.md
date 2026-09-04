@@ -45,6 +45,8 @@ Attachments, avatars, and `[img]`-tagged images that are missing or fail to deco
 usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--avatar-overrides FILE] [-m] [--exclude FILE] [-l]
                    [--url-mirrors FILE] [-i] [--incremental]
+                   [--ignore-hosts FILE] [--attachment-recovery DIR]
+                   [--style-css FILE] [--announcement FILE]
 
 Generate a static HTML archive from a phpBB MySQL dump
 
@@ -78,14 +80,41 @@ options:
                         Cloudflare) but you have direct filesystem access to
                         its files.
   -i, --check-images    List external [img]/<IMG> URLs that fail to resolve
-                        (via --url-mirrors or the network), instead of
-                        generating the archive — use ahead of a full run to
-                        see what needs mirroring
+                        (via --url-mirrors or the network) and write them to
+                        output/unresolved_images.json, instead of generating
+                        the archive — use ahead of a full run to see what
+                        needs mirroring
   --incremental         Keep previously-downloaded
                         attachments/avatars/external images instead of re-
                         fetching everything — only failed URLs are retried.
                         Generated pages are still rebuilt fresh every run. Off
                         by default.
+  --ignore-hosts FILE   JSON array of hostnames (e.g. ["tinypic.com"]) to skip
+                        entirely without a network attempt — matches
+                        subdomains too. Useful for hosts you already know are
+                        permanently gone, so --incremental doesn't keep paying
+                        their timeout on every future run.
+  --attachment-recovery DIR
+                        Directory with the same layout as an attachment source
+                        (physical_filename-named files) to check for a working
+                        copy of any attachment that's missing or fails to
+                        decode from the main dump — e.g. a separately-
+                        collected backup that isn't affected by the same
+                        corruption. A working copy found there replaces the
+                        broken one instead of it being dropped.
+  --style-css FILE      Replace the archive's built-in neutral stylesheet with
+                        a custom one (e.g. colors approximating a specific
+                        board's own theme). Every page links assets/style.css
+                        rather than inlining it, so this file (or a hand-
+                        edited assets/style.css copy) can also just be dropped
+                        into an already-generated archive to re-theme it
+                        without regenerating anything. Omit to keep the
+                        default neutral palette.
+  --announcement FILE   Plain text file of BBCode (e.g. "[b]This board is now
+                        a read-only archive.[/b]") to show as a notice on the
+                        index, every forum page, and every topic page. Not
+                        pulled from the dump — written fresh for the archive
+                        itself. Omit for no announcement.
 ```
 
 ### Fixing avatars the generator can't fetch on its own
@@ -131,6 +160,32 @@ If a source site blocks the generator (Cloudflare, robots rules) but you have di
 ```
 
 Run `-i`/`--check-images` first to see which URLs currently fail to resolve, so you know what's worth mirroring, before committing to a full run.
+
+### Custom color scheme
+
+The archive's own layout ships with a neutral default palette. `--style-css` swaps it for any stylesheet you point at:
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/ --style-css my-style.css
+```
+
+Every generated page links `assets/style.css` rather than inlining it, so re-theming an already-built archive later is just dropping a new `assets/style.css` into its `output/` (or wherever it's deployed) — no regeneration required.
+
+[`docs/contrib/phpbbmodders-style.css.example`](docs/contrib/phpbbmodders-style.css.example) is a real-world example: colors approximating a live board's own `prosilver` child theme (dark page background, an accent-colored frame, and matching header/category-bar colors), pulled from that theme's actual CSS rather than guessed.
+
+### Board-wide announcement
+
+`--announcement` shows a notice on the index, every forum page, and every topic page — written fresh for the archive (e.g. "this board is now read-only"), not pulled from the dump:
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/ --announcement docs/contrib/announcement.txt.example
+```
+
+The file is plain BBCode text, parsed the same way post content is:
+
+```
+[b]This board is now a read-only archive.[/b] Registration, posting, and private messaging have been disabled.
+```
 
 ## What gets generated
 
