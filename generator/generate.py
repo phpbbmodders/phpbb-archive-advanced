@@ -9,6 +9,7 @@ Usage:
 
 import argparse
 import datetime
+import json
 import logging
 import os
 import re
@@ -53,15 +54,122 @@ def read_table_prefix(config_path: Path) -> str:
     return "phpbb_"
 
 
-def avatar_url(user: dict, assets_prefix: str) -> str | None:
-    """Return a relative URL for the user's avatar, or None if none."""
+def _read_style_cfg(style_dir: Path) -> dict[str, str]:
+    """Parse a phpBB style.cfg file into a dict of key -> value, ignoring
+    comments and blank lines."""
+    cfg_path = style_dir / "style.cfg"
+    result: dict[str, str] = {}
+    if not cfg_path.exists():
+        return result
+    for line in cfg_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        result[key.strip()] = value.strip().strip("'\"")
+    return result
+
+
+def resolve_default_style(db: PhpbbDatabase, dump: Path) -> dict:
+    """Read phpbb_config.default_style, resolve it to a style_path under
+    dump/styles/, and walk its style.cfg "parent" chain to determine
+    whether it descends from prosilver. Informational only — does not
+    change what CSS/templates get used."""
+    info: dict = {"style_id": None, "style_path": None, "name": None,
+                  "chain": [], "is_prosilver_family": False}
+
+    style_id_raw = db.get_config("default_style")
+    info["style_id"] = style_id_raw
+    if not style_id_raw:
+        logger.warning("No default_style found in phpbb_config")
+        return info
+
+    style_path = db.get_style_path(int(style_id_raw))
+    info["style_path"] = style_path
+    if not style_path:
+        logger.warning("default_style id %s has no matching row in phpbb_styles", style_id_raw)
+        return info
+
+    seen: set[str] = set()
+    current = style_path
+    while current and current not in seen:
+        seen.add(current)
+        cfg = _read_style_cfg(dump / "styles" / current)
+        name = cfg.get("name", current)
+        parent = cfg.get("parent", "")
+        info["chain"].append({"path": current, "name": name, "parent": parent})
+        if not info["name"]:
+            info["name"] = name
+        if not parent or parent == current:
+            break  # base style — no real parent (phpBB convention: parent == own name/path)
+        current = parent
+
+    info["is_prosilver_family"] = any(step["path"] == "prosilver" for step in info["chain"])
+
+    logger.info(
+        "Default style: %s (%s) — %s",
+        info["name"], info["style_path"],
+        "descends from prosilver" if info["is_prosilver_family"] else "NOT a prosilver descendant",
+    )
+    for step in info["chain"]:
+        logger.info("  %s -> parent: %s", step["path"], step["parent"] or "(none)")
+
+    return info
+
+
+def load_exclusions(path: Path) -> set[int]:
+    """Load a JSON file of forum/category IDs to exclude entirely from the
+    archive: {"categories": [...], "forums": [...]}. This is just the seed
+    set — expand_exclusions_recursively() pulls in every descendant too, so
+    only the top-level thing you want hidden needs to be listed here."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {int(i) for i in data.get("categories", [])} | {int(i) for i in data.get("forums", [])}
+
+
+def expand_exclusions_recursively(seed_ids: set[int], all_forums: list[dict]) -> set[int]:
+    """Expand a set of forum/category IDs to include every descendant,
+    recursively. Excluding a category always excludes everything under it —
+    a forum can never end up "orphaned" (parent hidden, child still shown
+    prominently at the top level), which is the wrong direction to fail in
+    for a privacy feature."""
+    children_by_parent: dict[int, list[int]] = {}
+    for f in all_forums:
+        children_by_parent.setdefault(f["parent_id"], []).append(f["forum_id"])
+
+    result = set(seed_ids)
+    stack = list(seed_ids)
+    while stack:
+        current = stack.pop()
+        for child_id in children_by_parent.get(current, []):
+            if child_id not in result:
+                result.add(child_id)
+                stack.append(child_id)
+    return result
+
+
+def avatar_url(user: dict, assets_prefix: str, bad_avatars: set[str] | None = None,
+                remote_avatar_exts: dict[int, str] | None = None,
+                avatar_overrides: dict[int, str] | None = None) -> str | None:
+    """Return a relative URL for the user's avatar, or None if none (or if
+    the file is missing/corrupted — see find_bad_avatars / download_remote_avatars).
+
+    Remote avatars are downloaded and cached locally by download_remote_avatars()
+    rather than linked externally, so the archive stays self-contained; a dead
+    or undecodable remote URL is treated the same as having no avatar.
+
+    avatar_overrides (see load_avatar_overrides/apply_avatar_overrides) takes
+    priority over everything else — a manually supplied local image for a
+    user whose real avatar the generator can't fetch or decode on its own
+    (e.g. blocked by Cloudflare, or a dead host).
+    """
+    ext = (avatar_overrides or {}).get(user.get("user_id"))
+    if ext:
+        return f"{assets_prefix}/avatars/{user['user_id']}.{ext}"
+
     avatar = user.get("user_avatar", "")
     kind = user.get("user_avatar_type", "")
     if not avatar or avatar == "noavatar":
         return None
-    # Remote URLs (any type): use directly
-    if avatar.startswith("http://") or avatar.startswith("https://"):
-        return avatar
     # IPB migration artifact (e.g. "upload:av-26.png?1715977904") — can't recover file
     if avatar.startswith("upload:"):
         return None
@@ -69,7 +177,21 @@ def avatar_url(user: dict, assets_prefix: str) -> str | None:
     if kind == "avatar.driver.upload":
         m = re.match(r"(\d+)_\d+\.(\w+)$", avatar)
         if m:
-            return f"{assets_prefix}/avatars/{m.group(1)}.{m.group(2)}"
+            name = f"{m.group(1)}.{m.group(2)}"
+            if bad_avatars and name in bad_avatars:
+                return None
+            return f"{assets_prefix}/avatars/{name}"
+        return None
+    if kind == "avatar.driver.remote":
+        ext = (remote_avatar_exts or {}).get(user.get("user_id"))
+        if not ext:
+            return None
+        return f"{assets_prefix}/avatars/{user['user_id']}.{ext}"
+    if kind == "avatar.driver.local":
+        # DB stores the gallery-relative path directly, e.g. "phpbb/gear_red.png"
+        if bad_avatars and avatar in bad_avatars:
+            return None
+        return f"{assets_prefix}/avatars/gallery/{avatar}"
     return None
 
 
@@ -81,8 +203,10 @@ def _rewrite_css_imports(css_path: Path) -> None:
     css_path.write_text(content, encoding="utf-8")
 
 
-def copy_assets(dump_dir: Path, output_dir: Path) -> None:
-    """Copy CSS, images, smilies, avatars, and attachments into output/assets/."""
+def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: set[str] | None = None) -> None:
+    """Copy CSS, images, smilies, avatars, and attachments into output/assets/.
+    Attachments in excluded_physical_filenames (see load_exclusions) are
+    skipped entirely rather than copied and left unlinked."""
     assets = output_dir / "assets"
     assets.mkdir(parents=True, exist_ok=True)
 
@@ -137,6 +261,15 @@ def copy_assets(dump_dir: Path, output_dir: Path) -> None:
                 shutil.copy2(f, dest / f"{parts[1]}{f.suffix}")
         logger.info("Copied avatars")
 
+    # --- Avatar gallery (avatar.driver.local) ---
+    # DB stores the path relative to this directory, e.g. "phpbb/gear_red.png".
+    gallery_src = dump_dir / "images" / "avatars" / "gallery"
+    if gallery_src.exists():
+        dest = assets / "avatars" / "gallery"
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(gallery_src, dest, dirs_exist_ok=True)
+        logger.info("Copied avatar gallery")
+
     # --- Attachments ---
     # Some dumps end up with attachment files duplicated inside stray nested
     # subdirectories (e.g. dump/files/files/, dump/files/files/files/) from
@@ -151,6 +284,8 @@ def copy_assets(dump_dir: Path, output_dir: Path) -> None:
         copied = 0
         for dirpath, _dirnames, filenames in os.walk(files_src):
             for name in filenames:
+                if excluded_physical_filenames and name in excluded_physical_filenames:
+                    continue
                 target = dest / name
                 if target.exists():
                     continue
@@ -196,6 +331,331 @@ def find_bad_image_attachments(db: PhpbbDatabase, out: Path) -> set[str]:
     return bad
 
 
+def recover_bad_attachments(bad: set[str], recovery_dir: Path, out: Path) -> set[str]:
+    """For each physical_filename in `bad` (see find_bad_image_attachments),
+    check recovery_dir for a same-named copy that decodes cleanly — e.g. a
+    backup collected separately from the main dump/files/ that turns out
+    not to share the same corruption. A working copy is copied over the
+    broken one in assets/attachments/ and removed from the returned bad
+    set; anything not found or still broken there is left as-is."""
+    if not bad:
+        return bad
+    dest_dir = out / "assets" / "attachments"
+    recovered = 0
+    still_bad = set(bad)
+    for name in bad:
+        candidate = recovery_dir / name
+        if not candidate.exists():
+            continue
+        try:
+            with Image.open(candidate) as im:
+                im.load()
+        except Exception:
+            continue
+        shutil.copy2(candidate, dest_dir / name)
+        still_bad.discard(name)
+        recovered += 1
+    if recovered:
+        logger.info("Recovered %d of %d attachments from %s", recovered, len(bad), recovery_dir)
+    return still_bad
+
+
+def find_bad_avatars(users: list[dict], out: Path) -> set[str]:
+    """Return avatar keys that are missing from assets/avatars/ or fail to
+    decode: "{userid}.{ext}" for avatar.driver.upload, or the gallery-relative
+    path (e.g. "phpbb/gear_red.png") for avatar.driver.local. Mirrors
+    find_bad_image_attachments."""
+    avatars_dir = out / "assets" / "avatars"
+    bad: set[str] = set()
+    checked = 0
+    for user in users:
+        kind = user.get("user_avatar_type")
+        avatar = user.get("user_avatar", "")
+        if kind == "avatar.driver.upload":
+            m = re.match(r"(\d+)_\d+\.(\w+)$", avatar)
+            if not m:
+                continue
+            key = f"{m.group(1)}.{m.group(2)}"
+            path = avatars_dir / key
+        elif kind == "avatar.driver.local":
+            if not avatar:
+                continue
+            key = avatar
+            path = avatars_dir / "gallery" / avatar
+        else:
+            continue
+
+        checked += 1
+        if not path.exists():
+            bad.add(key)
+            continue
+        try:
+            with Image.open(path) as im:
+                im.load()
+        except Exception:
+            bad.add(key)
+    if bad:
+        logger.warning("Dropping %d of %d avatars (missing or corrupted)", len(bad), checked)
+    return bad
+
+
+_IMAGE_FORMAT_EXT = {"JPEG": "jpg", "PNG": "png", "GIF": "gif", "BMP": "bmp", "WEBP": "webp"}
+
+
+def _image_ext(im: "Image.Image") -> str | None:
+    """Map a Pillow-detected image format to a file extension."""
+    return _IMAGE_FORMAT_EXT.get(im.format, (im.format or "").lower() or None)
+
+
+def load_url_mirrors(path: Path) -> dict[str, Path]:
+    """Load a JSON file of {"url_prefix": "local_dir"} mappings. Any
+    external image URL starting with a prefix is resolved against
+    <local_dir>/<rest of the URL> instead of being fetched over the
+    network — useful when a source site blocks the generator (e.g.
+    Cloudflare bot protection) but you have direct filesystem access to
+    its files. "local_dir" paths are resolved relative to this mirrors
+    file's own directory unless already absolute."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    base = path.parent
+    result = {}
+    for prefix, local_dir in data.items():
+        local_path = Path(local_dir)
+        if not local_path.is_absolute():
+            local_path = base / local_path
+        result[prefix] = local_path
+    return result
+
+
+def load_ignored_hosts(path: Path) -> set[str]:
+    """Load a JSON array of hostnames (e.g. "tinypic.com") to skip without
+    ever attempting a network request. Matches the host itself and any
+    subdomain (so "tinypic.com" also covers "i28.tinypic.com"). Useful for
+    hosts you already know are permanently gone, so --incremental doesn't
+    keep paying their timeout on every future run."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {str(h).lower().lstrip(".") for h in data}
+
+
+def _fetch_image(url: str, timeout: int = 10, url_mirrors: dict[str, Path] | None = None,
+                  ignored_hosts: set[str] | None = None) -> tuple[bytes, str] | None:
+    """Resolve a URL to (raw_bytes, extension): first via any matching
+    local mirror directory (see load_url_mirrors), then skipping known-dead
+    hosts (see load_ignored_hosts) without a network attempt, falling back
+    to an actual network download. Returns None if unreachable/undecodable
+    either way."""
+    for prefix, local_dir in (url_mirrors or {}).items():
+        if not url.startswith(prefix):
+            continue
+        local_path = local_dir / url[len(prefix):]
+        if not local_path.exists():
+            continue
+        try:
+            with Image.open(local_path) as im:
+                im.load()
+                ext = _image_ext(im)
+        except Exception as e:
+            logger.warning("Mirrored file for %s failed to decode: %s (%s)", url, local_path, e)
+            continue
+        if ext:
+            return local_path.read_bytes(), ext
+
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    from io import BytesIO
+
+    if ignored_hosts:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+        if host and any(host == h or host.endswith(f".{h}") for h in ignored_hosts):
+            logger.warning("Image URL host is on the ignore list, skipping: %s", url)
+            return None
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "phpbb-archive/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+    except (urllib.error.URLError, OSError) as e:
+        logger.warning("Image URL unreachable: %s (%s)", url, e)
+        return None
+    try:
+        with Image.open(BytesIO(data)) as im:
+            im.load()
+            ext = _image_ext(im)
+    except Exception as e:
+        logger.warning("Image URL failed to decode: %s (%s)", url, e)
+        return None
+    if not ext:
+        return None
+    return data, ext
+
+
+def download_remote_avatars(users: list[dict], out: Path, url_mirrors: dict[str, Path] | None = None,
+                             ignored_hosts: set[str] | None = None) -> dict[int, str]:
+    """Download avatar.driver.remote avatars into assets/avatars/{userid}.{ext}
+    so the archive stays self-contained instead of hotlinking the original
+    site. Returns {user_id: ext} for avatars that downloaded and decoded
+    successfully; a dead URL or undecodable response is skipped (treated the
+    same as having no avatar) rather than left as a broken external link."""
+    remote_users = [
+        u for u in users
+        if u.get("user_avatar_type") == "avatar.driver.remote" and u.get("user_avatar", "").startswith(("http://", "https://"))
+    ]
+    cached: dict[int, str] = {}
+    if not remote_users:
+        return cached
+
+    dest_dir = out / "assets" / "avatars"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    skipped = 0
+    for user in remote_users:
+        existing = next(dest_dir.glob(f"{user['user_id']}.*"), None)
+        if existing is not None:
+            # Already cached from a previous run (see generate()'s
+            # --incremental, which preserves assets/ across runs).
+            cached[user["user_id"]] = existing.suffix.lstrip(".")
+            skipped += 1
+            continue
+        result = _fetch_image(user["user_avatar"], url_mirrors=url_mirrors, ignored_hosts=ignored_hosts)
+        if result is None:
+            continue
+        data, ext = result
+        (dest_dir / f"{user['user_id']}.{ext}").write_bytes(data)
+        cached[user["user_id"]] = ext
+
+    logger.info("Cached %d of %d remote avatars (%d already cached, %d newly fetched)",
+                len(cached), len(remote_users), skipped, len(cached) - skipped)
+    return cached
+
+
+def load_avatar_overrides(path: Path) -> list[dict]:
+    """Load a JSON array of {"user_id": int, "file": "path/to/image"}
+    entries. "file" paths are resolved relative to this override file's own
+    directory (unless already absolute), so a set of overrides can be kept
+    together in one folder and moved around as a unit."""
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    base = path.parent
+    result = []
+    for entry in entries:
+        file_path = Path(entry["file"])
+        if not file_path.is_absolute():
+            file_path = base / file_path
+        result.append({"user_id": int(entry["user_id"]), "path": file_path})
+    return result
+
+
+def apply_avatar_overrides(overrides: list[dict], out: Path) -> dict[int, str]:
+    """Copy each override's local image into assets/avatars/{userid}.{ext},
+    validating it decodes first. Returns {user_id: ext}; an override whose
+    file is missing or undecodable is skipped and logged rather than
+    silently ignored, since it means the mapping file has a mistake in it."""
+    dest_dir = out / "assets" / "avatars"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    applied: dict[int, str] = {}
+    for entry in overrides:
+        user_id, path = entry["user_id"], entry["path"]
+        if not path.exists():
+            logger.warning("Avatar override for user %s not found: %s", user_id, path)
+            continue
+        try:
+            with Image.open(path) as im:
+                im.load()
+                ext = _image_ext(im)
+        except Exception as e:
+            logger.warning("Avatar override for user %s failed to decode: %s (%s)", user_id, path, e)
+            continue
+        if not ext:
+            continue
+        shutil.copy2(path, dest_dir / f"{user_id}.{ext}")
+        applied[user_id] = ext
+    if applied:
+        logger.info("Applied %d avatar override(s)", len(applied))
+    return applied
+
+
+def report_missing_avatars(users: list[dict], bad_avatars: set[str], remote_avatar_exts: dict[int, str],
+                            avatar_overrides: dict[int, str], template_path: Path) -> None:
+    """Print every user whose avatar doesn't resolve to anything (after
+    local files, remote fetches, and any existing overrides), and write a
+    starter --avatar-overrides template listing them for editing."""
+    missing = [
+        u for u in users
+        if u.get("user_avatar_type") and not avatar_url(u, "assets", bad_avatars, remote_avatar_exts, avatar_overrides)
+    ]
+
+    if not missing:
+        print("No users with a missing or broken avatar.")
+        return
+
+    print(f"{len(missing)} user(s) with a missing or broken avatar:\n")
+    print(f"{'user_id':<8} {'username':<24} {'type':<22} original")
+    for u in sorted(missing, key=lambda u: u["user_id"]):
+        print(f"{u['user_id']:<8} {u['username']:<24} {u.get('user_avatar_type', ''):<22} {u.get('user_avatar', '')}")
+
+    template = [{"user_id": u["user_id"], "file": f"{u['username']}.ext"} for u in missing]
+    template_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
+    print(f"\nWrote a starter override template to {template_path}")
+    print('Edit each "file" to a local image path (relative to this file\'s own directory),')
+    print("then pass it via --avatar-overrides.")
+
+
+def find_image_urls(db: PhpbbDatabase, users: list[dict], forums: list[dict],
+                     exclude_forum_ids: set[int] | None = None) -> set[str]:
+    """Collect every external image URL referenced via [img] BBCode or XML
+    <IMG src> markup across post bodies, signatures, and forum descriptions.
+    Must be called with raw (not yet BBCode-converted) text. `forums` should
+    already be exclusion-filtered — only post text needs exclude_forum_ids
+    explicitly, since posts aren't otherwise filtered before reaching here."""
+    pattern_bbcode = re.compile(r'\[img\](https?://[^\]]*)\[/img\]', re.IGNORECASE)
+    pattern_xml = re.compile(r'<IMG\s+src="(https?://[^"]*)"', re.IGNORECASE)
+
+    texts = db.get_all_post_texts(exclude_forum_ids)
+    texts.extend(u.get("user_sig", "") for u in users if u.get("user_sig"))
+    texts.extend(f.get("forum_desc", "") for f in forums if f.get("forum_desc"))
+
+    urls: set[str] = set()
+    for text in texts:
+        urls.update(m.strip() for m in pattern_bbcode.findall(text))
+        urls.update(pattern_xml.findall(text))
+    return urls
+
+
+def download_external_images(urls: set[str], out: Path, url_mirrors: dict[str, Path] | None = None,
+                              ignored_hosts: set[str] | None = None) -> dict[str, str]:
+    """Download external [img]/<IMG> URLs into assets/external/{hash}.{ext}
+    so the archive stays self-contained. Returns {url: filename} for URLs
+    that downloaded and decoded successfully; a dead or undecodable URL is
+    skipped and its [img] tag is dropped entirely rather than left broken."""
+    import hashlib
+
+    cached: dict[str, str] = {}
+    if not urls:
+        return cached
+
+    dest_dir = out / "assets" / "external"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    skipped = 0
+    for url in sorted(urls):
+        digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+        existing = next(dest_dir.glob(f"{digest}.*"), None)
+        if existing is not None:
+            # Already cached from a previous run (see generate()'s
+            # --incremental, which preserves assets/ across runs).
+            cached[url] = existing.name
+            skipped += 1
+            continue
+        result = _fetch_image(url, url_mirrors=url_mirrors, ignored_hosts=ignored_hosts)
+        if result is None:
+            continue
+        data, ext = result
+        name = f"{digest}.{ext}"
+        (dest_dir / name).write_bytes(data)
+        cached[url] = name
+
+    logger.info("Cached %d of %d external images (%d already cached, %d newly fetched)",
+                len(cached), len(urls), skipped, len(cached) - skipped)
+    return cached
+
+
 def get_user_rank(user: dict, ranks: list[dict]) -> dict | None:
     """Find the display rank for a user: special-assigned first, then by post count."""
     special_rank_id = user.get("user_rank", 0)
@@ -221,11 +681,28 @@ def build_forum_tree(forums: list[dict]) -> list[dict]:
     roots = []
     for f in sorted(forums, key=lambda x: x["left_id"]):
         node = by_id[f["forum_id"]]
-        if f["parent_id"] == 0:
-            roots.append(node)
+        parent = by_id.get(f["parent_id"]) if f["parent_id"] != 0 else None
+        # A forum whose parent isn't in the list (e.g. excluded via
+        # --exclude without also excluding this child) becomes a root
+        # rather than being dropped or raising a KeyError.
+        if parent is not None:
+            parent["children"].append(node)
         else:
-            by_id[f["parent_id"]]["children"].append(node)
+            roots.append(node)
     return roots
+
+
+def prune_empty_categories(nodes: list[dict]) -> list[dict]:
+    """Drop category (forum_type 0) nodes that end up with no children —
+    mirrors phpBB's own behavior of hiding a category nobody can see into.
+    A forum with no topics is not touched; only categories are pruned."""
+    result = []
+    for node in nodes:
+        node["children"] = prune_empty_categories(node["children"])
+        if node.get("forum_type") == 0 and not node["children"]:
+            continue
+        result.append(node)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -276,16 +753,30 @@ def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
     forums_dir.mkdir(exist_ok=True)
     tmpl = env.get_template("forum.html")
 
-    for forum in process_forum_descs(forums, parser):
-        topics = db.get_topics(forum["forum_id"])
-        # Annotate each topic with its starter's username for the template
-        for t in topics:
-            poster = users.get(t.get("topic_poster", 0))
-            t["topic_poster_name"] = poster["username"] if poster else ""
+    children_by_parent: dict[int, list[dict]] = {}
+    for f in forums:
+        children_by_parent.setdefault(f["parent_id"], []).append(f)
+
+    # Categories (forum_type 0) get a page too — no topics of their own
+    # (phpBB doesn't allow posting directly into a category), but a page
+    # showing their description and sub-forums, same as a regular forum's
+    # Sub-forums section. Link-type forums (2) still get no local page.
+    renderable_forums = [f for f in forums if f.get("forum_type") in (0, 1)]
+    for forum in process_forum_descs(renderable_forums, parser):
+        is_category = forum.get("forum_type") == 0
+        topics = []
+        if not is_category:
+            topics = db.get_topics(forum["forum_id"])
+            # Annotate each topic with its starter's username for the template
+            for t in topics:
+                poster = users.get(t.get("topic_poster", 0))
+                t["topic_poster_name"] = poster["username"] if poster else ""
 
         html = tmpl.render(
             page_title=forum["forum_name"],
             forum=forum,
+            is_category=is_category,
+            sub_forums=children_by_parent.get(forum["forum_id"], []),
             topics=topics,
             assets="../assets",
             root="../",
@@ -293,13 +784,15 @@ def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
         )
         (forums_dir / f"{forum['forum_id']}.html").write_text(html, encoding="utf-8")
 
-    logger.info("Rendered %d forum pages", len(forums))
+    logger.info("Rendered %d forum pages", len(renderable_forums))
 
 
 def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   users: dict[int, dict], smilies: list[dict],
                   ranks: list[dict], custom_bbcodes: list[dict],
                   forums: list[dict], bad_attachments: set[str],
+                  bad_avatars: set[str], remote_avatar_exts: dict[int, str],
+                  avatar_overrides: dict[int, str], external_images: dict[str, str],
                   site_name: str = "") -> int:
     """Render all topic pages. Returns total post count."""
     topics_dir = out / "topics"
@@ -325,6 +818,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
             custom_bbcodes=custom_bbcodes,
             assets_prefix="../assets",
             bad_attachments=bad_attachments,
+            external_images=external_images,
         )
 
         rendered_posts = []
@@ -346,7 +840,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                     )
                 author_ctx = {
                     **author,
-                    "avatar_url": avatar_url(author, "../assets"),
+                    "avatar_url": avatar_url(author, "../assets", bad_avatars, remote_avatar_exts, avatar_overrides),
                     "rank_title": author.get("user_custom_title") or (rank["rank_title"] if rank else ""),
                     "rank_image": rank.get("rank_image", "") if rank else "",
                     "sig_html": sig_html,
@@ -376,7 +870,10 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
 
 def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                  smilies: list[dict], ranks: list[dict],
-                 custom_bbcodes: list[dict], site_name: str = "") -> None:
+                 custom_bbcodes: list[dict], bad_avatars: set[str],
+                 remote_avatar_exts: dict[int, str], avatar_overrides: dict[int, str],
+                 external_images: dict[str, str],
+                 site_name: str = "") -> None:
     users_dir = out / "users"
     users_dir.mkdir(exist_ok=True)
     tmpl = env.get_template("user.html")
@@ -386,6 +883,7 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
         attachments={},
         custom_bbcodes=custom_bbcodes,
         assets_prefix="../assets",
+        external_images=external_images,
     )
 
     for user in db.get_all_users():
@@ -400,7 +898,7 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
 
         html = tmpl.render(
             page_title=user["username"],
-            user={**user, "avatar_url": avatar_url(user, "../assets")},
+            user={**user, "avatar_url": avatar_url(user, "../assets", bad_avatars, remote_avatar_exts, avatar_overrides)},
             rank=rank,
             sig_html=sig_html,
             assets="../assets",
@@ -416,12 +914,15 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
 # Entry point
 # ---------------------------------------------------------------------------
 
-def generate(dump_dir: str, output_dir: str) -> None:
+def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
+                              exclude_path: str | None = None) -> tuple[PhpbbDatabase, Path, Path, str, set[int]]:
+    """Shared setup for generate() and find_missing_avatars(): import the
+    dump into SQLite and copy assets/. Returns (db, dump, out, site_name,
+    excluded_forum_ids)."""
     dump = Path(dump_dir)
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    # --- DB ---
     table_prefix = read_table_prefix(dump / "config.php")
     logger.info("Table prefix: %s", table_prefix)
 
@@ -439,19 +940,79 @@ def generate(dump_dir: str, output_dir: str) -> None:
     site_name = db.get_config("sitename") or sql_file.stem
     logger.info("Site name: %s", site_name)
 
-    # --- Assets ---
+    resolve_default_style(db, dump)
+
+    excluded_forum_ids: set[int] = set()
+    excluded_physical_filenames: set[str] = set()
+    if exclude_path:
+        seed_ids = load_exclusions(Path(exclude_path))
+        excluded_forum_ids = expand_exclusions_recursively(seed_ids, db.get_forums())
+        excluded_physical_filenames = db.get_attachment_physical_filenames_in_forums(excluded_forum_ids)
+        logger.info("Excluding %d forum(s)/categor(y/ies) from the archive (%d listed, %d after including descendants)",
+                    len(excluded_forum_ids), len(seed_ids), len(excluded_forum_ids))
+
     logger.info("Copying assets ...")
-    copy_assets(dump, out)
+    copy_assets(dump, out, excluded_physical_filenames)
+
+    return db, dump, out, site_name, excluded_forum_ids
+
+
+def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None = None,
+             exclude_path: str | None = None, url_mirrors_path: str | None = None,
+             incremental: bool = False, ignored_hosts_path: str | None = None,
+             attachment_recovery_dir: str | None = None) -> None:
+    out = Path(output_dir)
+    if out.exists():
+        if incremental:
+            # Keep assets/ (attachments, avatars, external images) so
+            # already-successful downloads aren't re-fetched — only the
+            # generated pages, which must always reflect the current
+            # dump/exclusions, get cleared. download_remote_avatars() and
+            # download_external_images() skip a URL whose cached file is
+            # already present; a URL that failed last run is retried.
+            logger.info("Incremental run: clearing generated pages, keeping cached assets")
+            for name in ("forums", "topics", "users", "index.html", ".phpbb_archive.db"):
+                target = out / name
+                if target.is_dir():
+                    shutil.rmtree(target)
+                elif target.exists():
+                    target.unlink()
+        else:
+            # Start from a clean slate: without this, a forum/topic/user
+            # that no longer gets a page this run (e.g. a category, per
+            # render_forums()) would leave its stale page behind forever.
+            logger.info("Clearing previous output: %s", out)
+            shutil.rmtree(out)
+
+    db, dump, out, site_name, excluded_forum_ids = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path)
 
     # --- Image attachments missing or corrupted in the source dump ---
     bad_attachments = find_bad_image_attachments(db, out)
+    if attachment_recovery_dir:
+        bad_attachments = recover_bad_attachments(bad_attachments, Path(attachment_recovery_dir), out)
 
     # --- Lookup tables ---
     smilies = db.get_smilies()
     ranks = db.get_ranks()
     custom_bbcodes = db.get_bbcodes()
     users: dict[int, dict] = {u["user_id"]: u for u in db.get_all_users()}
-    forums = db.get_forums()
+    forums = [f for f in db.get_forums() if f["forum_id"] not in excluded_forum_ids]
+
+    url_mirrors = load_url_mirrors(Path(url_mirrors_path)) if url_mirrors_path else None
+    ignored_hosts = load_ignored_hosts(Path(ignored_hosts_path)) if ignored_hosts_path else None
+
+    # --- Avatars missing or corrupted in the source dump ---
+    bad_avatars = find_bad_avatars(list(users.values()), out)
+    remote_avatar_exts = download_remote_avatars(list(users.values()), out, url_mirrors, ignored_hosts)
+    avatar_overrides = {}
+    if avatar_overrides_path:
+        avatar_overrides = apply_avatar_overrides(load_avatar_overrides(Path(avatar_overrides_path)), out)
+
+    # --- External [img]/<IMG> URLs referenced in posts, sigs, forum descs ---
+    # forums is already exclusion-filtered, so forum_desc scanning skips
+    # excluded forums naturally; post text is filtered explicitly.
+    image_urls = find_image_urls(db, list(users.values()), forums, excluded_forum_ids)
+    external_images = download_external_images(image_urls, out, url_mirrors, ignored_hosts)
 
     # --- Templates ---
     template_dir = Path(__file__).parent / "templates"
@@ -463,6 +1024,7 @@ def generate(dump_dir: str, output_dir: str) -> None:
         attachments={},
         custom_bbcodes=custom_bbcodes,
         assets_prefix="assets",  # index-level path; topics/forums use their own parser
+        external_images=external_images,
     )
 
     # Enrich forums with the topic_id of their last post (for linking)
@@ -471,23 +1033,142 @@ def generate(dump_dir: str, output_dir: str) -> None:
         f["forum_last_topic_id"] = db.get_post_topic_id(post_id) if post_id else None
 
     # --- Pages ---
-    forum_tree = build_forum_tree(process_forum_descs(forums, shared_parser))
+    forum_tree = prune_empty_categories(build_forum_tree(process_forum_descs(forums, shared_parser)))
 
-    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, site_name=site_name)
+    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name)
     render_forums(env, out, db, users, shared_parser, forums, site_name=site_name)
-    render_users(env, out, db, smilies, ranks, custom_bbcodes, site_name=site_name)
+    render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name)
     render_index(env, out, forum_tree or [], total_posts, site_name=site_name)
 
     db.close()
     logger.info("Done. Output: %s", out)
 
 
+def find_missing_avatars(dump_dir: str, output_dir: str, avatar_overrides_path: str | None = None) -> None:
+    """Diagnostic mode (-m/--missing-avatars): resolve avatars the same way
+    generate() does (local files, remote fetches, any existing overrides),
+    then list every user whose avatar still doesn't resolve and write a
+    starter --avatar-overrides template for them. Does not render the site."""
+    db, dump, out, _site_name, _excluded = _open_db_and_copy_assets(dump_dir, output_dir)
+
+    users = db.get_all_users()
+    bad_avatars = find_bad_avatars(users, out)
+    remote_avatar_exts = download_remote_avatars(users, out)
+    avatar_overrides = {}
+    if avatar_overrides_path:
+        avatar_overrides = apply_avatar_overrides(load_avatar_overrides(Path(avatar_overrides_path)), out)
+
+    template_path = Path(avatar_overrides_path) if avatar_overrides_path else out / "avatar_overrides.json"
+    report_missing_avatars(users, bad_avatars, remote_avatar_exts, avatar_overrides, template_path)
+
+    db.close()
+
+
+def list_forums(dump_dir: str, output_dir: str) -> None:
+    """Diagnostic mode (-l/--list-forums): print every forum/category with
+    its forum_id, indented to show nesting, so you know which id(s) to put
+    in an --exclude JSON file. Does not render the site."""
+    db, dump, out, _site_name, _excluded = _open_db_and_copy_assets(dump_dir, output_dir)
+
+    tree = build_forum_tree(db.get_forums())
+    type_label = {0: "category", 1: "forum", 2: "link"}
+
+    def _print(nodes: list[dict], depth: int = 0) -> None:
+        for node in nodes:
+            kind = type_label.get(node.get("forum_type"), "?")
+            print(f"{'  ' * depth}{node['forum_id']:<6} [{kind:<8}] {node['forum_name']}")
+            _print(node["children"], depth + 1)
+
+    _print(tree)
+    db.close()
+
+
+def check_images(dump_dir: str, output_dir: str, url_mirrors_path: str | None = None,
+                  ignored_hosts_path: str | None = None) -> None:
+    """Diagnostic mode (-i/--check-images): find every external [img]/<IMG>
+    URL referenced in posts, signatures, and forum descriptions, and report
+    which ones fail to resolve (via any --url-mirrors, or the network) —
+    ahead of committing to a full, slow generate() run. Does not render the
+    site or write any topic/forum/user pages."""
+    db, dump, out, _site_name, _excluded = _open_db_and_copy_assets(dump_dir, output_dir)
+
+    users = db.get_all_users()
+    forums = db.get_forums()
+    urls = find_image_urls(db, users, forums)
+    url_mirrors = load_url_mirrors(Path(url_mirrors_path)) if url_mirrors_path else None
+    ignored_hosts = load_ignored_hosts(Path(ignored_hosts_path)) if ignored_hosts_path else None
+
+    failed = []
+    for url in sorted(urls):
+        if _fetch_image(url, url_mirrors=url_mirrors, ignored_hosts=ignored_hosts) is None:
+            failed.append(url)
+
+    print(f"{len(urls) - len(failed)} of {len(urls)} external image URL(s) resolve.")
+    if failed:
+        print(f"\n{len(failed)} unresolved (add these to --url-mirrors or accept they'll be dropped):")
+        for url in failed:
+            print(f"  {url}")
+
+    db.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a static HTML archive from a phpBB MySQL dump")
     parser.add_argument("--dump", default="dump", help="Path to dump/ directory")
     parser.add_argument("--output", default="output", help="Path to output/ directory")
+    parser.add_argument("--avatar-overrides", metavar="FILE",
+                         help="JSON file mapping user_id to a local avatar image, for avatars "
+                              "the generator can't fetch or decode on its own")
+    parser.add_argument("-m", "--missing-avatars", action="store_true",
+                         help="List users with a missing/broken avatar and write a starter "
+                              "--avatar-overrides template, instead of generating the archive")
+    parser.add_argument("--exclude", metavar="FILE",
+                         help='JSON file of forum/category IDs to leave out of the archive entirely: '
+                              '{"categories": [...], "forums": [...]}. Excluding a category also '
+                              "excludes everything under it, recursively — list just the top-level "
+                              "id(s) you want hidden. Attachments and external images used only in "
+                              "excluded forums are never copied or downloaded. Use -l/--list-forums "
+                              "to find forum_id values.")
+    parser.add_argument("-l", "--list-forums", action="store_true",
+                         help="Print every forum/category with its forum_id (indented to show "
+                              "nesting), to help build an --exclude file, instead of generating "
+                              "the archive")
+    parser.add_argument("--url-mirrors", metavar="FILE",
+                         help='JSON file of {"url_prefix": "local_dir"} mappings. Any external '
+                              "[img]/avatar URL starting with a prefix is looked up in the matching "
+                              "local directory first, instead of being fetched over the network — "
+                              "useful when a source site blocks the generator (e.g. Cloudflare) but "
+                              "you have direct filesystem access to its files.")
+    parser.add_argument("-i", "--check-images", action="store_true",
+                         help="List external [img]/<IMG> URLs that fail to resolve (via "
+                              "--url-mirrors or the network), instead of generating the archive — "
+                              "use ahead of a full run to see what needs mirroring")
+    parser.add_argument("--incremental", action="store_true",
+                         help="Keep previously-downloaded attachments/avatars/external images "
+                              "instead of re-fetching everything — only failed URLs are retried. "
+                              "Generated pages are still rebuilt fresh every run. Off by default.")
+    parser.add_argument("--ignore-hosts", metavar="FILE",
+                         help='JSON array of hostnames (e.g. ["tinypic.com"]) to skip entirely '
+                              "without a network attempt — matches subdomains too. Useful for "
+                              "hosts you already know are permanently gone, so --incremental "
+                              "doesn't keep paying their timeout on every future run.")
+    parser.add_argument("--attachment-recovery", metavar="DIR",
+                         help="Directory with the same layout as an attachment source "
+                              "(physical_filename-named files) to check for a working copy of "
+                              "any attachment that's missing or fails to decode from the main "
+                              "dump — e.g. a separately-collected backup that isn't affected by "
+                              "the same corruption. A working copy found there replaces the "
+                              "broken one instead of it being dropped.")
     args = parser.parse_args()
-    generate(args.dump, args.output)
+    if args.missing_avatars:
+        find_missing_avatars(args.dump, args.output, args.avatar_overrides)
+    elif args.list_forums:
+        list_forums(args.dump, args.output)
+    elif args.check_images:
+        check_images(args.dump, args.output, args.url_mirrors, args.ignore_hosts)
+    else:
+        generate(args.dump, args.output, args.avatar_overrides, args.exclude, args.url_mirrors,
+                 args.incremental, args.ignore_hosts, args.attachment_recovery)
 
 
 if __name__ == "__main__":

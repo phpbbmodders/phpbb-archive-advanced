@@ -173,8 +173,42 @@ class PhpbbDatabase:
             (post_id,),
         )
 
-    def get_all_attachments(self) -> list[dict]:
+    def get_all_attachments(self, exclude_forum_ids: set[int] | None = None) -> list[dict]:
+        if exclude_forum_ids:
+            placeholders = ",".join("?" * len(exclude_forum_ids))
+            return self._query(
+                f'SELECT a.* FROM "{self._table("attachments")}" a '
+                f'JOIN "{self._table("posts")}" p ON a.post_msg_id = p.post_id '
+                f"WHERE p.forum_id NOT IN ({placeholders})",
+                tuple(exclude_forum_ids),
+            )
         return self._query(f'SELECT * FROM "{self._table("attachments")}"')
+
+    def get_attachment_physical_filenames_in_forums(self, forum_ids: set[int]) -> set[str]:
+        """physical_filename values for attachments belonging to posts in
+        the given forums — used to keep excluded-forum attachments out of
+        assets/ entirely rather than just unlinked."""
+        if not forum_ids:
+            return set()
+        placeholders = ",".join("?" * len(forum_ids))
+        rows = self._query(
+            f'SELECT DISTINCT a.physical_filename FROM "{self._table("attachments")}" a '
+            f'JOIN "{self._table("posts")}" p ON a.post_msg_id = p.post_id '
+            f"WHERE p.forum_id IN ({placeholders})",
+            tuple(forum_ids),
+        )
+        return {r["physical_filename"] for r in rows}
+
+    def get_all_post_texts(self, exclude_forum_ids: set[int] | None = None) -> list[str]:
+        if exclude_forum_ids:
+            placeholders = ",".join("?" * len(exclude_forum_ids))
+            rows = self._query(
+                f'SELECT post_text FROM "{self._table("posts")}" WHERE forum_id NOT IN ({placeholders})',
+                tuple(exclude_forum_ids),
+            )
+        else:
+            rows = self._query(f'SELECT post_text FROM "{self._table("posts")}"')
+        return [r["post_text"] for r in rows if r["post_text"]]
 
     def get_smilies(self) -> list[dict]:
         return self._query(f'SELECT * FROM "{self._table("smilies")}"')
@@ -191,6 +225,13 @@ class PhpbbDatabase:
             (name,),
         )
         return rows[0]["config_value"] if rows else None
+
+    def get_style_path(self, style_id: int) -> str | None:
+        rows = self._query(
+            f'SELECT style_path FROM "{self._table("styles")}" WHERE style_id = ?',
+            (style_id,),
+        )
+        return rows[0]["style_path"] if rows else None
 
     def close(self):
         self.conn.close()

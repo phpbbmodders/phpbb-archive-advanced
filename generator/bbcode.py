@@ -17,7 +17,8 @@ class PhpbbBBCodeParser:
     def __init__(self, smilies: list[dict], attachments: dict[int, list[dict]],
                  custom_bbcodes: list[dict] | None = None,
                  assets_prefix: str = "../assets",
-                 bad_attachments: set[str] | None = None):
+                 bad_attachments: set[str] | None = None,
+                 external_images: dict[str, str] | None = None):
         # Map smiley code → image filename
         self.smilies = {s["code"]: s["smiley_url"] for s in smilies}
         # Map post_id → list of attachment dicts (ordered)
@@ -30,6 +31,10 @@ class PhpbbBBCodeParser:
         # entirely from the rendered post rather than shown as a broken
         # image or a "missing attachment" placeholder.
         self.bad_attachments = bad_attachments or set()
+        # Map external [img]/<IMG> URL → locally cached filename under
+        # assets/external/ (see download_external_images). A URL missing
+        # from this map is dead or undecodable, and its tag is dropped.
+        self.external_images = external_images or {}
 
     def _append_trailing_attachments(self, result: str, post_id: int, original_text: str) -> str:
         """Append attachments that had no [attachment=N] inline tag."""
@@ -151,10 +156,17 @@ class PhpbbBBCodeParser:
         text = re.sub(r'</QUOTE>', '</blockquote>', text)
         text = re.sub(r'<URL url="([^"]*)"[^>]*>', r'<a href="\1" class="postlink">', text)
         text = re.sub(r'</URL>', '</a>', text)
-        # <IMG src="url">optional text</IMG> — capture src, discard inner text
-        text = re.sub(r'<IMG\s+src="([^"]*)"[^>]*>.*?</IMG>', r'<img src="\1" class="postimage" alt="image">', text, flags=re.DOTALL)
+        # <IMG src="url">optional text</IMG> — capture src, discard inner
+        # text; resolved against the locally cached copy, same as [img]
+        # BBCode above. A dead or undecodable URL is dropped.
+        def replace_xml_img(match):
+            name = self.external_images.get(match.group(1).strip())
+            if not name:
+                return ''
+            return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image">'
+        text = re.sub(r'<IMG\s+src="([^"]*)"[^>]*>.*?</IMG>', replace_xml_img, text, flags=re.DOTALL)
         # Also handle self-closing form
-        text = re.sub(r'<IMG\s+src="([^"]*)"[^>]*/>', r'<img src="\1" class="postimage" alt="image">', text)
+        text = re.sub(r'<IMG\s+src="([^"]*)"[^>]*/>', replace_xml_img, text)
         text = re.sub(r'<COLOR color="([^"]*)">', r'<span style="color:\1">', text)
         text = re.sub(r'</COLOR>', '</span>', text)
         text = re.sub(r'<SIZE size="(\d+)">', r'<span style="font-size:\1%">', text)
@@ -297,8 +309,15 @@ class PhpbbBBCodeParser:
             text, flags=re.DOTALL,
         )
 
-        # Image
-        text = re.sub(r'\[img\](.*?)\[/img\]', r'<img src="\1" class="postimage" alt="image" />', text, flags=re.DOTALL)
+        # Image — resolved against the locally cached copy of the external
+        # URL; a dead or undecodable URL (not in external_images) is dropped
+        # rather than left as a broken hotlink.
+        def replace_img(match):
+            name = self.external_images.get(match.group(1).strip())
+            if not name:
+                return ''
+            return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image" />'
+        text = re.sub(r'\[img\](.*?)\[/img\]', replace_img, text, flags=re.DOTALL)
 
         # Quote with author
         text = re.sub(
