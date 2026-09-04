@@ -28,14 +28,14 @@
       </div>
       {% if author.avatar_url %}
       <div class="user-avatar">
-        <img src="{{ author.avatar_url }}" alt="{{ author.username | e }}">
+        <img src="{{ author.avatar_url }}" alt="{{ author.username | e }}" loading="lazy">
       </div>
       {% endif %}
       {% if author.rank_title %}
       <div class="rank-title" style="font-size:0.95em;color:#555">{{ author.rank_title | e }}</div>
       {% endif %}
       {% if author.rank_image %}
-      <div class="rank-img"><img src="{{ root }}assets/images/ranks/{{ author.rank_image }}" alt="rank"></div>
+      <div class="rank-img"><img src="{{ root }}assets/images/ranks/{{ author.rank_image }}" alt="rank" loading="lazy"></div>
       {% endif %}
       <div style="font-size:0.95em;color:#777;margin-top:4px">
         Posts: {{ author.user_posts }}<br>

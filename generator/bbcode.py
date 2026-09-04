@@ -62,7 +62,7 @@ class PhpbbBBCodeParser:
             if is_image:
                 trailing.append(
                     f'<div class="inline-attachment">'
-                    f'<img src="{path}" alt="{html.escape(real)}" />'
+                    f'<img src="{path}" alt="{html.escape(real)}" loading="lazy" />'
                     f'<br/><em>{html.escape(real)}</em></div>'
                 )
             else:
@@ -161,13 +161,13 @@ class PhpbbBBCodeParser:
             name = self.external_images.get(match.group(1).strip())
             if not name:
                 return ''
-            return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image">'
+            return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image" loading="lazy">'
 
         def replace_xml_img_url(url):
             name = self.external_images.get(url.strip())
             if not name:
                 return ''
-            return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image">'
+            return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image" loading="lazy">'
 
         # Migration artifacts from boards that started on phpBB2, where
         # [img]...[/img] BBCode wasn't reconverted to a proper <IMG>
@@ -247,7 +247,7 @@ class PhpbbBBCodeParser:
                 path = f"{self.assets_prefix}/attachments/{physical}"
                 if is_image:
                     return (f'<div class="inline-attachment">'
-                            f'<img src="{path}" alt="{html.escape(real)}" />'
+                            f'<img src="{path}" alt="{html.escape(real)}" loading="lazy" />'
                             f'<br/><em>{html.escape(real)}</em></div>')
                 return f'<div class="inline-attachment"><a href="{path}">{html.escape(real)}</a></div>'
             logger.warning("XML attachment index %d out of range for post %s", index, post_id)
@@ -313,7 +313,7 @@ class PhpbbBBCodeParser:
             path = f"{self.assets_prefix}/attachments/{physical}"
             # If it looks like an image, embed it; otherwise link it
             if is_image:
-                return f'<div class="inline-attachment"><img src="{path}" alt="{html.escape(real)}" /><br/><em>{html.escape(real)}</em></div>'
+                return f'<div class="inline-attachment"><img src="{path}" alt="{html.escape(real)}" loading="lazy" /><br/><em>{html.escape(real)}</em></div>'
             else:
                 return f'<div class="inline-attachment"><a href="{path}">{html.escape(real)}</a></div>'
 
@@ -356,7 +356,7 @@ class PhpbbBBCodeParser:
             name = self.external_images.get(match.group(1).strip())
             if not name:
                 return ''
-            return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image" />'
+            return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image" loading="lazy" />'
         text = re.sub(r'\[img\](.*?)\[/img\]', replace_img, text, flags=re.DOTALL)
 
         # Quote with author
