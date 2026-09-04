@@ -7,6 +7,7 @@ Real-world starting points for the generator's optional `--ignore-hosts`, `--sty
 | [`known-dead-hosts.json.example`](known-dead-hosts.json.example) | `--ignore-hosts` | Image/avatar hosts that were confirmed dead (parked domains, shut-down services) during a real archive run — hostnames worth skipping without a network attempt on any board. |
 | [`phpbbmodders-style.css.example`](phpbbmodders-style.css.example) | `--style-css` | A complete custom stylesheet, sourced from a live board's actual `prosilver` child theme rather than guessed — a worked example of what a `--style-css` file looks like end to end. |
 | [`announcement.txt.example`](announcement.txt.example) | `--announcement` | A short BBCode notice ("this board is now a read-only archive") — a worked example of the plain-text-BBCode format `--announcement` expects. |
+| [`run.sh.example`](run.sh.example) | all of them | phpbbmodders.net's actual wrapper script, wiring every flag above (plus `--avatar-overrides`, `--url-mirrors`, `--attachment-recovery`, `--exclude`, `--incremental`) into one command. Real paths from a real deployment, not a generic template — copy it and adjust the paths for your own board. |
 
 Usage:
 

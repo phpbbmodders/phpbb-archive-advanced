@@ -1,0 +1,38 @@
+#!/usr/bin/bash
+set -Eeuo pipefail
+
+# Regenerates the static archive with every fix/feature this deployment
+# needs wired in: igorw's avatar override, the phpbbmodders.net
+# userbar/rank-image and rmcgirr83.org smilie mirrors, recovery of
+# corrupted attachments from the dump/qustionabl/ backup, skipping
+# known-dead hosts (known-dead-hosts.json) without a network attempt,
+# excluding the Team category (config/exclude.json) from the archive
+# entirely, a stylesheet (config/phpbbmodders-style.css) approximating
+# the live board's own color scheme, and a board-wide notice
+# (config/announcement.txt) — empty by default, so nothing renders
+# until it's filled in. --incremental keeps previously-downloaded
+# attachments/avatars/external images across runs instead of
+# re-fetching everything.
+#
+# Usage:
+#   ./run.sh                 Full run using the config/ files below.
+#   ./run.sh --no-incremental
+#                             Force a clean re-fetch of everything.
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$script_dir"
+
+extra_args=("--incremental")
+if [[ "${1:-}" == "--no-incremental" ]]; then
+    extra_args=()
+fi
+
+./generate.sh \
+    --avatar-overrides config/avatar_overrides.json \
+    --url-mirrors config/url_mirrors.json \
+    --attachment-recovery dump/qustionabl/files \
+    --ignore-hosts known-dead-hosts.json \
+    --exclude config/exclude.json \
+    --style-css config/phpbbmodders-style.css \
+    --announcement config/announcement.txt \
+    "${extra_args[@]}"
