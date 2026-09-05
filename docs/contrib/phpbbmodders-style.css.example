@@ -173,6 +173,7 @@ blockquote .quote-header { font-weight: bold; font-size: 0.9em; color: #666666; 
 
 .inline-attachment { margin: 8px 0; }
 .inline-attachment img { max-width: 100%; }
+.inline-attachment em { display: block; font-style: normal; font-size: 0.8em; color: #666666; margin-top: 2px; }
 .attachment-missing { color: #BC2A4D; font-style: italic; }
 
 /* Board-wide announcement (see --announcement). Real prosilver's own
