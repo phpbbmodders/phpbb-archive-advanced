@@ -262,7 +262,18 @@ class PhpbbBBCodeParser:
         text = re.sub(r'<HR\s*/?>', '<hr>', text)
         text = text.replace('[hr]', '').replace('[/hr]', '')
 
-        # Smilies
+        # Smilies stored as <E>code</E> (phpBB XML markup format) — resolved
+        # against the same phpbb_smilies code → filename map as the older
+        # HTML-comment format below. An unrecognized code (not in the dump's
+        # smilies table) is left as its raw text rather than dropped.
+        def replace_xml_smiley(m):
+            filename = self.smilies.get(m.group(1))
+            if not filename:
+                return m.group(1)
+            return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="smiley" class="smilies" />'
+        text = re.sub(r'<E>([^<]*)</E>', replace_xml_smiley, text)
+
+        # Smilies stored in the older HTML-comment format (mixed-era dumps)
         text = self._convert_smilies(text)
 
         # Strip any remaining unknown XML tags (e.g. custom elements)

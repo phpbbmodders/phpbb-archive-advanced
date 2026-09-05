@@ -485,32 +485,47 @@ def _fetch_image(url: str, timeout: int = 10, url_mirrors: dict[str, Path] | Non
         logger.warning("Image URL host is on the ignore list, skipping: %s", url)
         return None
 
-    # A realistic browser UA + same-site Referer clears basic hotlink
-    # protection on otherwise-public images (e.g. Cloudflare's default bot
-    # rules) without attempting to defeat real access controls — nothing
-    # here handles auth, CAPTCHAs, or private/signed URLs.
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Referer": f"{parsed.scheme}://{parsed.netloc}/",
-    }
-    try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read()
-    except (urllib.error.URLError, OSError) as e:
-        logger.warning("Image URL unreachable: %s (%s)", url, e)
-        return None
-    try:
-        with Image.open(BytesIO(data)) as im:
-            im.load()
-            ext = _image_ext(im)
-    except Exception as e:
-        logger.warning("Image URL failed to decode: %s (%s)", url, e)
-        return None
-    if not ext:
-        return None
-    return data, ext
+    def _try(fetch_url: str) -> tuple[bytes, str] | None:
+        # A realistic browser UA + same-site Referer clears basic hotlink
+        # protection on otherwise-public images (e.g. Cloudflare's default
+        # bot rules) without attempting to defeat real access controls —
+        # nothing here handles auth, CAPTCHAs, or private/signed URLs.
+        fetch_parsed = urllib.parse.urlparse(fetch_url)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": f"{fetch_parsed.scheme}://{fetch_parsed.netloc}/",
+        }
+        try:
+            req = urllib.request.Request(fetch_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = resp.read()
+        except (urllib.error.URLError, OSError) as e:
+            logger.warning("Image URL unreachable: %s (%s)", fetch_url, e)
+            return None
+        try:
+            with Image.open(BytesIO(data)) as im:
+                im.load()
+                ext = _image_ext(im)
+        except Exception as e:
+            logger.warning("Image URL failed to decode: %s (%s)", fetch_url, e)
+            return None
+        if not ext:
+            return None
+        return data, ext
+
+    result = _try(url)
+    if result is None and host and (host == "postimg.org" or host.endswith(".postimg.org")):
+        # postimg.org itself is a parked/dead domain, but postimg.cc — the
+        # service's current domain — still serves the same images under the
+        # same subdomain and path (verified against real old postimg.org
+        # links from this dump, not assumed).
+        new_host = "postimg.cc" if host == "postimg.org" else host[: -len("postimg.org")] + "postimg.cc"
+        new_netloc = new_host if not parsed.port else f"{new_host}:{parsed.port}"
+        rewritten = urllib.parse.urlunparse(parsed._replace(netloc=new_netloc))
+        logger.warning("Retrying dead postimg.org URL against postimg.cc: %s", rewritten)
+        result = _try(rewritten)
+    return result
 
 
 def download_remote_avatars(users: list[dict], out: Path, url_mirrors: dict[str, Path] | None = None,
@@ -1125,6 +1140,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     # --- Templates ---
     template_dir = Path(__file__).parent / "templates"
     env = build_jinja_env(template_dir)
+    env.globals["search_enabled"] = search
 
     # --- Shared parser (used for forum descs and user sigs as well as posts) ---
     shared_parser = PhpbbBBCodeParser(
