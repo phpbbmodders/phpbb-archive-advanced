@@ -175,6 +175,17 @@ blockquote .quote-header { font-weight: bold; font-size: 0.9em; color: #666666; 
 .inline-attachment img { max-width: 100%; }
 .inline-attachment em { display: block; font-style: normal; font-size: 0.8em; color: #666666; margin-top: 2px; }
 .attachment-missing { color: #BC2A4D; font-style: italic; }
+.attachment-ext {
+  display: inline-block;
+  background: #862C23;
+  color: #fff;
+  font-size: 0.7em;
+  font-weight: bold;
+  padding: 1px 4px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
 
 /* Board-wide announcement (see --announcement). Real prosilver's own
    div.rules color — the live board's child theme doesn't override it. */
@@ -185,6 +196,21 @@ blockquote .quote-header { font-weight: bold; font-size: 0.9em; color: #666666; 
   padding: 8px 12px;
   margin-bottom: 10px;
 }
+
+/* Poll results (read-only — this is a static archive, voting is closed) */
+.poll {
+  background: #ECF1F3;
+  border: 1px solid #BFC1CF;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+}
+.poll-title { font-weight: bold; color: #666666; margin-bottom: 8px; }
+.poll-option { margin-bottom: 6px; }
+.poll-option-text { font-size: 0.95em; color: #333; }
+.poll-bar { background: #CCCCCC; height: 14px; margin: 2px 0; }
+.poll-bar-fill { background: #105289; height: 100%; }
+.poll-option-stats { font-size: 0.8em; color: #666666; }
+.poll-total { font-size: 0.85em; color: #666666; margin-top: 6px; border-top: 1px solid #CCCCCC; padding-top: 4px; }
 
 details.spoiler summary { cursor: pointer; color: #105289; }
 
@@ -209,4 +235,24 @@ details.spoiler summary { cursor: pointer; color: #105289; }
   --pagefind-ui-border: #BFC1CF;
   --pagefind-ui-tag: #ECF1F3;
   --pagefind-ui-font: Verdana, Geneva, sans-serif;
+}
+
+/* Narrow screens: the two structural things that don't reflow on their
+   own — the fixed-width post sidebar, and the fixed-width lastpost
+   column, which is wide enough to crowd a phone-size viewport. */
+@media (max-width: 600px) {
+  .post-wrap { flex-direction: column; }
+  .postprofile {
+    width: auto;
+    max-width: none;
+    border-right: none;
+    border-bottom: 1px solid #BFC1CF;
+  }
+  ul.topiclist li.row .col-lastpost,
+  .forabg .header .header-cols .col-lastpost,
+  .forumbg .header .header-cols .col-lastpost {
+    min-width: 100px;
+    max-width: 130px;
+    font-size: 0.8em;
+  }
 }

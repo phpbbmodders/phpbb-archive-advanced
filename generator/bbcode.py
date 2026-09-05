@@ -13,6 +13,17 @@ logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 
 
+def _attachment_ext_badge(filename: str) -> str:
+    """A small extension badge for a non-image attachment link. A bare SQL
+    dump carries no per-filetype icon set (phpBB's own mimetype icons live
+    alongside the software install, not in the database), so this uses the
+    file's own extension rather than a fabricated icon."""
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    if not ext or len(ext) > 5:
+        return ""
+    return f'<span class="attachment-ext">{html.escape(ext.upper())}</span> '
+
+
 class PhpbbBBCodeParser:
     def __init__(self, smilies: list[dict], attachments: dict[int, list[dict]],
                  custom_bbcodes: list[dict] | None = None,
@@ -81,7 +92,7 @@ class PhpbbBBCodeParser:
                 )
             else:
                 trailing.append(
-                    f'<div class="inline-attachment"><a href="{path}">{html.escape(real)}</a></div>'
+                    f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}">{html.escape(real)}</a></div>'
                 )
 
         if trailing:
@@ -263,7 +274,7 @@ class PhpbbBBCodeParser:
                     return (f'<div class="inline-attachment">'
                             f'<img src="{path}" alt="{html.escape(real)}" loading="lazy" />'
                             f'<br/><em>{html.escape(real)}</em></div>')
-                return f'<div class="inline-attachment"><a href="{path}">{html.escape(real)}</a></div>'
+                return f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}">{html.escape(real)}</a></div>'
             logger.warning("XML attachment index %d out of range for post %s", index, post_id)
             if filename.lower().endswith(IMAGE_EXTENSIONS):
                 return ''
@@ -286,7 +297,7 @@ class PhpbbBBCodeParser:
                 return m.group(1)
             filename, w, h = entry
             size_attrs = f' width="{w}" height="{h}"' if w and h else ''
-            return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="smiley" class="smilies"{size_attrs} />'
+            return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="{html.escape(m.group(1))}" class="smilies"{size_attrs} />'
         text = re.sub(r'<E>([^<]*)</E>', replace_xml_smiley, text)
 
         # Smilies stored in the older HTML-comment format (mixed-era dumps)
@@ -307,7 +318,12 @@ class PhpbbBBCodeParser:
                 filename = img_match.group(1)
                 w, h = self.smiley_sizes_by_filename.get(filename, (0, 0))
                 size_attrs = f' width="{w}" height="{h}"' if w and h else ''
-                return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="smiley" class="smilies"{size_attrs} />'
+                # phpBB's own comment format already carries the code as the
+                # img's alt (e.g. alt=":)"); reuse it instead of a generic
+                # label — falls back to "smiley" only if a dump lacks it.
+                alt_match = re.search(r'alt="([^"]*)"', full)
+                alt = html.escape(alt_match.group(1)) if alt_match else "smiley"
+                return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="{alt}" class="smilies"{size_attrs} />'
             return full
 
         # Match one smiley at a time: <!-- s<code> --><img .../><!-- s<code> -->
@@ -344,7 +360,7 @@ class PhpbbBBCodeParser:
             if is_image:
                 return f'<div class="inline-attachment"><img src="{path}" alt="{html.escape(real)}" loading="lazy" /><br/><em>{html.escape(real)}</em></div>'
             else:
-                return f'<div class="inline-attachment"><a href="{path}">{html.escape(real)}</a></div>'
+                return f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}">{html.escape(real)}</a></div>'
 
         text = re.sub(
             r'\[attachment=(\d+)\](.*?)\[/attachment\]',

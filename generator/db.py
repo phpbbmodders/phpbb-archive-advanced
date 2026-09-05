@@ -173,6 +173,13 @@ class PhpbbDatabase:
             (post_id,),
         )
 
+    def get_poll_options(self, topic_id: int) -> list[dict]:
+        return self._query(
+            f'SELECT * FROM "{self._table("poll_options")}" WHERE topic_id = ? '
+            f"ORDER BY poll_option_id",
+            (topic_id,),
+        )
+
     def get_all_attachments(self, exclude_forum_ids: set[int] | None = None) -> list[dict]:
         if exclude_forum_ids:
             placeholders = ",".join("?" * len(exclude_forum_ids))

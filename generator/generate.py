@@ -896,10 +896,29 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                 "author": author_ctx,
             })
 
+        poll = None
+        if topic.get("poll_title"):
+            options = db.get_poll_options(topic["topic_id"])
+            total_votes = sum(o["poll_option_total"] for o in options)
+            poll = {
+                "title_html": parser.convert(topic["poll_title"], uid="", post_id=None),
+                "max_options": topic.get("poll_max_options", 1),
+                "total_votes": total_votes,
+                "options": [
+                    {
+                        "text_html": parser.convert(o["poll_option_text"], uid="", post_id=None),
+                        "votes": o["poll_option_total"],
+                        "percent": round(o["poll_option_total"] / total_votes * 100) if total_votes else 0,
+                    }
+                    for o in options
+                ],
+            }
+
         forum_name = forum_names.get(topic["forum_id"], "")
         html = tmpl.render(
             page_title=topic["topic_title"],
             topic=topic,
+            poll=poll,
             forum_name=forum_name,
             posts=rendered_posts,
             assets="../assets",

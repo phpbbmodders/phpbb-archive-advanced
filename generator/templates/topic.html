@@ -21,6 +21,20 @@
 {% if announcement_html %}<div class="announcement">{{ announcement_html | safe }}</div>{% endif %}
 <h2>{{ topic.topic_title | e }}</h2>
 
+{% if poll %}
+<div class="poll">
+  <div class="poll-title">{{ poll.title_html | safe }}</div>
+  {% for option in poll.options %}
+  <div class="poll-option">
+    <div class="poll-option-text">{{ option.text_html | safe }}</div>
+    <div class="poll-bar"><div class="poll-bar-fill" style="width:{{ option.percent }}%"></div></div>
+    <div class="poll-option-stats">{{ option.votes }} vote{{ '' if option.votes == 1 else 's' }} ({{ option.percent }}%)</div>
+  </div>
+  {% endfor %}
+  <div class="poll-total">Total votes: {{ poll.total_votes }}{% if poll.max_options > 1 %} &middot; You could select up to {{ poll.max_options }} options{% endif %}</div>
+</div>
+{% endif %}
+
 {% if not posts %}
 <div style="padding:12px; color:#999; font-style:italic;">This topic's post content is missing from the source database and could not be recovered.</div>
 {% endif %}

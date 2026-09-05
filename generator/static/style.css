@@ -163,6 +163,17 @@ blockquote .quote-header { font-weight: bold; font-size: 0.9em; color: #536482; 
 .inline-attachment img { max-width: 100%; }
 .inline-attachment em { display: block; font-style: normal; font-size: 0.8em; color: #555; margin-top: 2px; }
 .attachment-missing { color: #c00; font-style: italic; }
+.attachment-ext {
+  display: inline-block;
+  background: #536482;
+  color: #fff;
+  font-size: 0.7em;
+  font-weight: bold;
+  padding: 1px 4px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
 
 /* Board-wide announcement (see --announcement) */
 .announcement {
@@ -172,6 +183,21 @@ blockquote .quote-header { font-weight: bold; font-size: 0.9em; color: #536482; 
   padding: 8px 12px;
   margin-bottom: 10px;
 }
+
+/* Poll results (read-only — this is a static archive, voting is closed) */
+.poll {
+  background: #EAF0F8;
+  border: 1px solid #B3C0D8;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+}
+.poll-title { font-weight: bold; color: #536482; margin-bottom: 8px; }
+.poll-option { margin-bottom: 6px; }
+.poll-option-text { font-size: 0.95em; color: #333; }
+.poll-bar { background: #D1D7E3; height: 14px; margin: 2px 0; }
+.poll-bar-fill { background: #2E6EA6; height: 100%; }
+.poll-option-stats { font-size: 0.8em; color: #666; }
+.poll-total { font-size: 0.85em; color: #536482; margin-top: 6px; border-top: 1px solid #D1D7E3; padding-top: 4px; }
 
 details.spoiler summary { cursor: pointer; color: #2E6EA6; }
 
@@ -196,4 +222,24 @@ details.spoiler summary { cursor: pointer; color: #2E6EA6; }
   --pagefind-ui-border: #B3C0D8;
   --pagefind-ui-tag: #D1D7E3;
   --pagefind-ui-font: Verdana, Geneva, sans-serif;
+}
+
+/* Narrow screens: the two structural things that don't reflow on their
+   own — the fixed-width post sidebar, and the fixed-width lastpost
+   column, which is wide enough to crowd a phone-size viewport. */
+@media (max-width: 600px) {
+  .post-wrap { flex-direction: column; }
+  .postprofile {
+    width: auto;
+    max-width: none;
+    border-right: none;
+    border-bottom: 1px solid #B3C0D8;
+  }
+  ul.topiclist li.row .col-lastpost,
+  .forabg .header .header-cols .col-lastpost,
+  .forumbg .header .header-cols .col-lastpost {
+    min-width: 100px;
+    max-width: 130px;
+    font-size: 0.8em;
+  }
 }

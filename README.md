@@ -249,7 +249,7 @@ Requires the `pagefind[bin]` package (already in `generator/requirements.txt`) �
 
 Result titles come from a `data-pagefind-meta="title:..."` attribute the archive sets on every page's `<body>` — without it, Pagefind defaults to each page's first `<h1>`, which on this archive is always just the site name, making every search result look identical. `search.html` itself is excluded from the index (`data-pagefind-ignore`) since it has no content of its own, just the search widget.
 
-**Testing locally, `search.html` must be served over `http://`/`https://`, not opened as a `file://` path.** Pagefind's engine can't fetch its own index under `file://` — the query box will accept input and show "Searching for…" but never return results, with no error shown anywhere. Any static file server works for testing, e.g. `python3 -m http.server` from inside `output/`; a real deployment is served over HTTP(S) anyway, so this only matters when checking the archive locally before publishing it.
+**Testing locally, `search.html` must be served over `http://`/`https://`, not opened as a `file://` path.** Pagefind's engine can't fetch its own index under `file://` — the query box will accept input and show "Searching for…" but never return results, with no error shown anywhere. Any static file server works for testing, e.g. `python3 -m http.server` from inside `output/` (see `docs/contrib/serve.sh`); a real deployment is served over HTTP(S) anyway, so this only matters when checking the archive locally before publishing it.
 
 ## What gets generated
 
