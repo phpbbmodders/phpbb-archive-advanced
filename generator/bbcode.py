@@ -19,8 +19,22 @@ class PhpbbBBCodeParser:
                  assets_prefix: str = "../assets",
                  bad_attachments: set[str] | None = None,
                  external_images: dict[str, str] | None = None):
-        # Map smiley code → image filename
-        self.smilies = {s["code"]: s["smiley_url"] for s in smilies}
+        # Map smiley code → (image filename, display width, display height).
+        # phpBB stores a smiley pack's *intended* display size separately
+        # from its source image files, which are often much larger (a
+        # 202x214 source file displayed at 17x18) — width/height 0 means
+        # "not set" (older/custom dumps), so the size attrs are omitted and
+        # the browser falls back to the image's native size, same as before.
+        self.smilies = {
+            s["code"]: (s["smiley_url"], s.get("smiley_width") or 0, s.get("smiley_height") or 0)
+            for s in smilies
+        }
+        # Reverse lookup by filename for the older HTML-comment smiley
+        # format (_convert_smilies), which only gives us the image filename
+        # from the existing <img src>, not the code.
+        self.smiley_sizes_by_filename = {
+            filename: (w, h) for filename, w, h in self.smilies.values() if w and h
+        }
         # Map post_id → list of attachment dicts (ordered)
         self.attachments = attachments
         # Custom BBCodes: list of dicts with bbcode_tag, bbcode_match, bbcode_tpl
@@ -267,10 +281,12 @@ class PhpbbBBCodeParser:
         # HTML-comment format below. An unrecognized code (not in the dump's
         # smilies table) is left as its raw text rather than dropped.
         def replace_xml_smiley(m):
-            filename = self.smilies.get(m.group(1))
-            if not filename:
+            entry = self.smilies.get(m.group(1))
+            if not entry:
                 return m.group(1)
-            return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="smiley" class="smilies" />'
+            filename, w, h = entry
+            size_attrs = f' width="{w}" height="{h}"' if w and h else ''
+            return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="smiley" class="smilies"{size_attrs} />'
         text = re.sub(r'<E>([^<]*)</E>', replace_xml_smiley, text)
 
         # Smilies stored in the older HTML-comment format (mixed-era dumps)
@@ -289,7 +305,9 @@ class PhpbbBBCodeParser:
             img_match = re.search(r'src="[^"]*?/([^/"]+)"', full)
             if img_match:
                 filename = img_match.group(1)
-                return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="smiley" class="smilies" />'
+                w, h = self.smiley_sizes_by_filename.get(filename, (0, 0))
+                size_attrs = f' width="{w}" height="{h}"' if w and h else ''
+                return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="smiley" class="smilies"{size_attrs} />'
             return full
 
         # Match one smiley at a time: <!-- s<code> --><img .../><!-- s<code> -->
