@@ -36,6 +36,8 @@ hr { border: 0; border-top: 1px solid #CCCCCC; }
 #page-header h1 a { color: #fff; }
 #page-header h1 a:hover { text-decoration: none; color: #D1E8FF; }
 #page-header .site-desc { color: #A8C4E0; font-size: 0.9em; margin: 2px 0 0; }
+#page-header .site-desc a.header-search { color: #fff; }
+#page-header .site-desc a.header-search:hover { text-decoration: none; color: #D1E8FF; }
 
 /* ── breadcrumb ── */
 .breadcrumb {
@@ -126,12 +128,17 @@ table.topic-table td.lastpost { font-size: 0.85em; color: #666666; }
   font-size: 0.9em;
   flex-shrink: 0;
 }
+/* --profile-position right */
+.post-wrap--right { flex-direction: row-reverse; }
+.post-wrap--right .postprofile { border-right: none; border-left: 1px solid #BFC1CF; }
 .postprofile strong { color: #000; display: block; margin-bottom: 4px; font-size: 1.05em; }
 .postprofile a { color: #105289; }
 .postprofile .user-avatar img { max-width: 90px; max-height: 90px; display: block; margin: 4px auto 6px; }
 .postprofile .rank-img img { max-width: 120px; display: block; margin: 2px 0; }
 .postbody { padding: 8px 12px; vertical-align: top; flex: 1; min-width: 0; }
 .post-date { font-size: 0.85em; color: #666666; margin-bottom: 6px; border-bottom: 1px solid #CCCCCC; padding-bottom: 4px; }
+.post-date a.post-permalink { color: inherit; text-decoration: none; }
+.post-date a.post-permalink:hover { text-decoration: underline; }
 .content { color: #333; max-width: 80ch; }
 .sig {
   border-top: 1px solid #CCCCCC;
@@ -241,11 +248,12 @@ details.spoiler summary { cursor: pointer; color: #105289; }
    own — the fixed-width post sidebar, and the fixed-width lastpost
    column, which is wide enough to crowd a phone-size viewport. */
 @media (max-width: 600px) {
-  .post-wrap { flex-direction: column; }
-  .postprofile {
+  .post-wrap, .post-wrap--right { flex-direction: column; }
+  .postprofile, .post-wrap--right .postprofile {
     width: auto;
     max-width: none;
     border-right: none;
+    border-left: none;
     border-bottom: 1px solid #BFC1CF;
   }
   ul.topiclist li.row .col-lastpost,

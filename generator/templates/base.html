@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}{{ page_title }} - {{ site_name }}{% endblock %}</title>
-<link rel="stylesheet" href="{{ root }}assets/style.css">
+<link rel="stylesheet" href="{{ root }}assets/style.css?v={{ style_version }}">
 {% block extra_head %}{% endblock %}
 </head>
 <body{% block body_attrs %} data-pagefind-meta="title:{{ page_title }} - {{ site_name }}"{% endblock %}>
@@ -12,12 +12,12 @@
 
 <div id="page-header">
   <h1><a class="no-bracket" href="{{ root }}index.html">{{ site_name }}</a></h1>
-  <p class="site-desc">Static archive</p>
+  <p class="site-desc">Static archive{% if search_enabled %} &middot; <a href="{{ root }}search.html" class="header-search">Search</a>{% endif %}</p>
 </div>
 
 <div id="page-body">
 <div class="breadcrumb">
-  <a href="{{ root }}index.html">Board index</a>{% if search_enabled %} &middot; <a href="{{ root }}search.html">Search</a>{% endif %}{% block breadcrumb %}{% endblock %}
+  <a href="{{ root }}index.html">Board index</a>{% block breadcrumb %}{% endblock %}
 </div>
 {% block content %}{% endblock %}
 </div>

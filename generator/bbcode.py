@@ -29,7 +29,8 @@ class PhpbbBBCodeParser:
                  custom_bbcodes: list[dict] | None = None,
                  assets_prefix: str = "../assets",
                  bad_attachments: set[str] | None = None,
-                 external_images: dict[str, str] | None = None):
+                 external_images: dict[str, str] | None = None,
+                 internal_topic_ids: set[int] | None = None):
         # Map smiley code → (image filename, display width, display height).
         # phpBB stores a smiley pack's *intended* display size separately
         # from its source image files, which are often much larger (a
@@ -60,6 +61,32 @@ class PhpbbBBCodeParser:
         # assets/external/ (see download_external_images). A URL missing
         # from this map is dead or undecodable, and its tag is dropped.
         self.external_images = external_images or {}
+        # topic_ids actually present in this archive, for rewriting a post's
+        # own link back to viewtopic.php?...t=N (a cross-reference to another
+        # topic on the same board) into a relative link within the archive
+        # instead of leaving it pointing at the original site. A topic_id
+        # not in this set (excluded, or a link to a different board
+        # entirely) is left as a normal external link.
+        self.internal_topic_ids = internal_topic_ids or set()
+        self.topics_prefix = re.sub(r'assets$', 'topics', assets_prefix)
+
+    def _rewrite_internal_link(self, url: str) -> str:
+        """If url points at this board's own viewtopic.php for a topic that's
+        actually in this archive, rewrite it to a relative topics/N.html
+        link (preserving a #pNNNN post anchor if present) so cross-topic
+        references stay working inside the static archive. Otherwise
+        returns url unchanged — including a viewtopic.php link to a topic
+        that isn't in this archive (excluded, or a different board), which
+        stays a normal external link rather than becoming a broken one."""
+        topic_match = re.search(r'viewtopic\.php\?[^"#]*\bt=(\d+)', url)
+        if not topic_match:
+            return url
+        topic_id = int(topic_match.group(1))
+        if topic_id not in self.internal_topic_ids:
+            return url
+        fragment_match = re.search(r'(#p\d+)', url)
+        fragment = fragment_match.group(1) if fragment_match else ''
+        return f'{self.topics_prefix}/{topic_id}.html{fragment}'
 
     def _append_trailing_attachments(self, result: str, post_id: int, original_text: str) -> str:
         """Append attachments that had no [attachment=N] inline tag."""
@@ -92,7 +119,7 @@ class PhpbbBBCodeParser:
                 )
             else:
                 trailing.append(
-                    f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}">{html.escape(real)}</a></div>'
+                    f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}" download="{html.escape(real)}">{html.escape(real)}</a></div>'
                 )
 
         if trailing:
@@ -227,7 +254,7 @@ class PhpbbBBCodeParser:
         #     as the sole span between the brackets.
         text = re.sub(r'\[img\](https?://[^\s\[\]<>]+)\[/img\]', lambda m: replace_xml_img_url(m.group(1)), text)
 
-        text = re.sub(r'<URL url="([^"]*)"[^>]*>', r'<a href="\1" class="postlink">', text)
+        text = re.sub(r'<URL url="([^"]*)"[^>]*>', lambda m: f'<a href="{self._rewrite_internal_link(m.group(1))}" class="postlink">', text)
         text = re.sub(r'</URL>', '</a>', text)
         text = re.sub(r'<IMG\s+src="([^"]*)"[^>]*>.*?</IMG>', replace_xml_img, text, flags=re.DOTALL)
         # Also handle self-closing form
@@ -274,7 +301,7 @@ class PhpbbBBCodeParser:
                     return (f'<div class="inline-attachment">'
                             f'<img src="{path}" alt="{html.escape(real)}" loading="lazy" />'
                             f'<br/><em>{html.escape(real)}</em></div>')
-                return f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}">{html.escape(real)}</a></div>'
+                return f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}" download="{html.escape(real)}">{html.escape(real)}</a></div>'
             logger.warning("XML attachment index %d out of range for post %s", index, post_id)
             if filename.lower().endswith(IMAGE_EXTENSIONS):
                 return ''
@@ -360,7 +387,7 @@ class PhpbbBBCodeParser:
             if is_image:
                 return f'<div class="inline-attachment"><img src="{path}" alt="{html.escape(real)}" loading="lazy" /><br/><em>{html.escape(real)}</em></div>'
             else:
-                return f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}">{html.escape(real)}</a></div>'
+                return f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}" download="{html.escape(real)}">{html.escape(real)}</a></div>'
 
         text = re.sub(
             r'\[attachment=(\d+)\](.*?)\[/attachment\]',
@@ -384,13 +411,13 @@ class PhpbbBBCodeParser:
         # URL with label
         text = re.sub(
             r'\[url=([^\]]+)\](.*?)\[/url\]',
-            r'<a href="\1" class="postlink">\2</a>',
+            lambda m: f'<a href="{self._rewrite_internal_link(m.group(1))}" class="postlink">{m.group(2)}</a>',
             text, flags=re.DOTALL,
         )
         # URL bare
         text = re.sub(
             r'\[url\](.*?)\[/url\]',
-            r'<a href="\1" class="postlink">\1</a>',
+            lambda m: f'<a href="{self._rewrite_internal_link(m.group(1))}" class="postlink">{m.group(1)}</a>',
             text, flags=re.DOTALL,
         )
 

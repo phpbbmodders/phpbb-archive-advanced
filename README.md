@@ -44,10 +44,11 @@ Attachments, avatars, and `[img]`-tagged images that are missing or fail to deco
 ```output
 usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--avatar-overrides FILE] [-m] [--exclude FILE] [-l]
-                   [--url-mirrors FILE] [-i] [--incremental]
+                   [--url-mirrors FILE] [-i] [-c] [--incremental]
                    [--ignore-hosts FILE] [--attachment-recovery DIR]
                    [--style-css FILE] [--announcement FILE]
-                   [--sitemap-url URL] [--search] [-c]
+                   [--sitemap-url URL] [--search]
+                   [--profile-position {left,right}]
 
 Generate a static HTML archive from a phpBB MySQL dump
 
@@ -85,6 +86,14 @@ options:
                         output/unresolved_images.json, instead of generating
                         the archive — use ahead of a full run to see what
                         needs mirroring
+  -c, --check-links     Scan an already-generated output/ for internal
+                        href/src links that don't resolve — either to a file
+                        that doesn't exist, or (for a #anchor link) to an
+                        id="..." that doesn't exist in the target file — and
+                        write them to output/broken_links.json, instead of
+                        generating the archive. External URLs aren't checked
+                        here — see --ignore-hosts/--url-mirrors for those. Run
+                        after a normal build.
   --incremental         Keep previously-downloaded
                         attachments/avatars/external images instead of re-
                         fetching everything — only failed URLs are retried.
@@ -127,21 +136,16 @@ options:
                         explicit absolute URL rather than being inferred. Omit
                         for no sitemap/robots.txt.
   --search              Add a dedicated search.html (linked from every page's
-                        breadcrumb bar) indexing every generated page with
-                        Pagefind, a static client-side search engine — no
-                        server required, same as the rest of the archive.
-                        Requires the pagefind[bin] package (see
-                        generator/requirements.txt) and runs it as a
-                        subprocess after every other page is written. Off by
-                        default.
-  -c, --check-links     Scan an already-generated output/ for internal
-                        href/src links that don't resolve — either to a file
-                        that doesn't exist, or (for a #anchor link) to an
-                        id="..." that doesn't exist in the target file — and
-                        write them to output/broken_links.json, instead of
-                        generating the archive. External URLs aren't checked
-                        here — see --ignore-hosts/--url-mirrors for those. Run
-                        after a normal build.
+                        header) indexing every generated page with Pagefind, a
+                        static client-side search engine — no server required,
+                        same as the rest of the archive. Requires the
+                        pagefind[bin] package (see generator/requirements.txt)
+                        and runs it as a subprocess after every other page is
+                        written. Off by default.
+  --profile-position {left,right}
+                        Which side of a post the poster's profile sidebar
+                        (avatar, rank, post count) sits on in viewtopic.
+                        Defaults to left, matching phpBB's own layout.
 ```
 
 ### Fixing avatars the generator can't fetch on its own
@@ -239,7 +243,7 @@ Every topic page also carries Open Graph and Twitter Card meta tags (title, desc
 
 ### Full-text search
 
-`--search` adds `search.html` (linked from every page's breadcrumb bar) and indexes every generated page with [Pagefind](https://pagefind.app/), a static client-side search engine — no server, no external service, same self-contained philosophy as the rest of the archive:
+`--search` adds `search.html` (linked from every page's header) and indexes every generated page with [Pagefind](https://pagefind.app/), a static client-side search engine — no server, no external service, same self-contained philosophy as the rest of the archive:
 
 ```bash
 .venv/bin/python -m generator.generate --dump dump/ --output output/ --search

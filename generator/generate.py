@@ -836,6 +836,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   forums: list[dict], bad_attachments: set[str],
                   bad_avatars: set[str], remote_avatar_exts: dict[int, str],
                   avatar_overrides: dict[int, str], external_images: dict[str, str],
+                  internal_topic_ids: set[int],
                   site_name: str = "", announcement_html: str | None = None,
                   site_url: str | None = None) -> int:
     """Render all topic pages. Returns total post count."""
@@ -863,6 +864,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
             assets_prefix="../assets",
             bad_attachments=bad_attachments,
             external_images=external_images,
+            internal_topic_ids=internal_topic_ids,
         )
 
         rendered_posts = []
@@ -937,7 +939,7 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                  smilies: list[dict], ranks: list[dict],
                  custom_bbcodes: list[dict], bad_avatars: set[str],
                  remote_avatar_exts: dict[int, str], avatar_overrides: dict[int, str],
-                 external_images: dict[str, str],
+                 external_images: dict[str, str], internal_topic_ids: set[int],
                  site_name: str = "") -> None:
     users_dir = out / "users"
     users_dir.mkdir(exist_ok=True)
@@ -949,6 +951,7 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
         custom_bbcodes=custom_bbcodes,
         assets_prefix="../assets",
         external_images=external_images,
+        internal_topic_ids=internal_topic_ids,
     )
 
     for user in db.get_all_users():
@@ -1102,7 +1105,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
              incremental: bool = False, ignored_hosts_path: str | None = None,
              attachment_recovery_dir: str | None = None, style_css_path: str | None = None,
              announcement_path: str | None = None, sitemap_url: str | None = None,
-             search: bool = False) -> None:
+             search: bool = False, profile_position: str = "left") -> None:
     out = Path(output_dir)
     if out.exists():
         if incremental:
@@ -1160,6 +1163,24 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     template_dir = Path(__file__).parent / "templates"
     env = build_jinja_env(template_dir)
     env.globals["search_enabled"] = search
+    env.globals["profile_position"] = profile_position
+
+    # Cache-bust assets/style.css with a hash of its own content so a
+    # re-themed/re-regenerated archive is picked up immediately instead of
+    # a browser serving a stale cached copy (http.server sends only
+    # Last-Modified, no Cache-Control/ETag, so browsers can skip
+    # revalidation). Doesn't affect the documented "drop a new
+    # assets/style.css into an already-built archive" workflow: that
+    # leaves the HTML (and its query string) untouched either way.
+    import hashlib
+    style_css_path_out = out / "assets" / "style.css"
+    env.globals["style_version"] = hashlib.sha1(style_css_path_out.read_bytes()).hexdigest()[:8]
+
+    # topic_ids actually in this archive, so a post's own link back to
+    # viewtopic.php?...t=N (a cross-reference to another topic on the same
+    # board) can be rewritten to a relative in-archive link — see
+    # PhpbbBBCodeParser._rewrite_internal_link().
+    internal_topic_ids = {t["topic_id"] for f in forums for t in db.get_topics(f["forum_id"])}
 
     # --- Shared parser (used for forum descs and user sigs as well as posts) ---
     shared_parser = PhpbbBBCodeParser(
@@ -1168,6 +1189,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
         custom_bbcodes=custom_bbcodes,
         assets_prefix="assets",  # index-level path; topics/forums use their own parser
         external_images=external_images,
+        internal_topic_ids=internal_topic_ids,
     )
 
     # Enrich forums with the topic_id of their last post (for linking)
@@ -1191,9 +1213,9 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
 
     site_url = sitemap_url if not sitemap_url or sitemap_url.endswith("/") else sitemap_url + "/"
 
-    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name, announcement_html=announcement_html, site_url=site_url)
+    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, site_name=site_name, announcement_html=announcement_html, site_url=site_url)
     render_forums(env, out, db, users, shared_parser, forums, site_name=site_name, announcement_html=announcement_html)
-    render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, site_name=site_name)
+    render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, site_name=site_name)
     render_index(env, out, forum_tree or [], total_posts, site_name=site_name, announcement_html=announcement_html)
 
     if site_url:
@@ -1413,12 +1435,16 @@ def main() -> None:
                               "entries can't be, which is why this needs an explicit absolute URL "
                               "rather than being inferred. Omit for no sitemap/robots.txt.")
     parser.add_argument("--search", action="store_true",
-                         help="Add a dedicated search.html (linked from every page's breadcrumb "
-                              "bar) indexing every generated page with Pagefind, a static "
+                         help="Add a dedicated search.html (linked from every page's header) "
+                              "indexing every generated page with Pagefind, a static "
                               "client-side search engine — no server required, same as the rest "
                               "of the archive. Requires the pagefind[bin] package (see "
                               "generator/requirements.txt) and runs it as a subprocess after "
                               "every other page is written. Off by default.")
+    parser.add_argument("--profile-position", choices=["left", "right"], default="left",
+                         help="Which side of a post the poster's profile sidebar (avatar, rank, "
+                              "post count) sits on in viewtopic. Defaults to left, matching "
+                              "phpBB's own layout.")
     args = parser.parse_args()
     if args.missing_avatars:
         find_missing_avatars(args.dump, args.output, args.avatar_overrides)
@@ -1431,7 +1457,7 @@ def main() -> None:
     else:
         generate(args.dump, args.output, args.avatar_overrides, args.exclude, args.url_mirrors,
                  args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
-                 args.announcement, args.sitemap_url, args.search)
+                 args.announcement, args.sitemap_url, args.search, args.profile_position)
 
 
 if __name__ == "__main__":

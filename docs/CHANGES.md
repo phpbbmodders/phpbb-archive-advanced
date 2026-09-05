@@ -20,6 +20,7 @@ Everything below was added on top of matildepark's original 4 commits (`b079b39`
 | `--sitemap-url URL` | Writes `sitemap.xml`/`robots.txt` for that absolute base URL — see below |
 | `--search` | Adds `search.html`, indexed with Pagefind — see below |
 | `-c`/`--check-links` | Diagnostic mode: scans an already-generated `output/` for internal links that don't resolve, writes `output/broken_links.json` — see below |
+| `--profile-position {left,right}` | Which side of a post the poster's profile sidebar sits on in viewtopic. Defaults to left, matching phpBB's own layout |
 
 ## Corrupted and missing content
 
@@ -33,6 +34,11 @@ Everything below was added on top of matildepark's original 4 commits (`b079b39`
 - **Lazy-loaded images**: every post/attachment/avatar `<img>` is marked `loading="lazy"`, so a long thread with dozens of embedded images doesn't force the browser to fetch all of them up front.
 - **XML-format smilies (`<E>code</E>`)**: phpBB 3.2+'s XML post storage represents a smiley as `<E>:code:</E>` rather than the older `<!-- s... --><img .../><!-- s... -->` HTML-comment form `_convert_smilies()` already handled. Without a specific handler, the generic "strip unknown XML tags" fallback removed the `<E>` tags but kept the raw code as visible text (`:ugeek:`, `:P`, etc., never converted to the actual smiley image). `_convert_xml_markup()` now resolves `<E>` content against the same `phpbb_smilies` code → filename map; an unrecognized code is left as its raw text rather than dropped.
 - **Smiley sizing**: neither smiley path set a `width`/`height` attribute, so a pack whose source image files are larger than their intended display size (a real board's `icon_e_ugeek.png`: 202×214px on disk, `phpbb_smilies.smiley_width`/`smiley_height` says 17×18) rendered huge instead of icon-sized. Both paths now read the dump's own display-size columns — real per-smiley metadata, not a guessed constant — and set the attributes when present; a code with 0×0 (unset in some dumps) falls back to the old unscaled behavior.
+- **Downloadable attachment filenames**: a non-image attachment's `<a href>` pointed straight at its `physical_filename` (a hash-like name on disk), so saving it gave a meaningless filename instead of the original one. The link now carries `download="<real_filename>"`, so a browser save keeps the name it actually had.
+- **Attachment-type badges**: a non-image attachment was a bare filename link with no visual cue about what it was. A small CSS badge (e.g. "ZIP") now shows the file's own extension — no per-filetype icon set exists in a bare SQL dump to draw a real icon from, so this is a text badge rather than a fabricated one.
+- **Internal cross-topic links**: a post linking to another topic on the *same* board (`[url=http://.../viewtopic.php?f=16&t=11434]...[/url]`, or the XML `<URL url="...">` equivalent) pointed at the original site rather than the corresponding page in this archive. Both the XML and old-BBCode link paths now check the linked `t=` topic id against the set of topic ids actually in this archive and rewrite it to a relative `topics/N.html` link (preserving a `#pNNNN` post anchor) when it matches; a link to a topic that's excluded, or on an entirely different board, is left as a normal external link rather than becoming a broken one.
+- **Linked last-poster names**: the "last post by X" name shown on the index (per forum) and on a forum page (per topic) was plain text, unlike the topic-starter name next to it, which was already a link. Both now link to `users/<id>.html` using the dump's own `forum_last_poster_id`/`topic_last_poster_id` columns, falling back to plain text only when that id is 0 (no poster recorded).
+- **Post permalinks**: every post already carried an `id="pN"` anchor (used by the internal cross-topic link rewrite above), but there was no visible way to get a link to one specific post — a viewer would have to know to hand-craft the `#pN` fragment. The post's own "Posted: ..." timestamp is now a link to its own anchor, so right-click → copy link (or just clicking through) gives the exact permalink.
 
 ## Private-forum exclusion
 
@@ -44,12 +50,17 @@ Everything below was added on top of matildepark's original 4 commits (`b079b39`
 - Categories get their own page (description + sub-forum list) even though phpBB doesn't allow posting directly into one.
 - Sub-forums render as their own section on a forum's page.
 - `forum-description` box (a forum/category's configured description, shown at the top of its page) now has its own theme-aware CSS class (`.forum-description`) instead of hardcoded inline colors that broke contrast whenever a non-default `--style-css` used a dark or saturated background.
+- Mobile reflow: the fixed-width `.postprofile` sidebar and the fixed-width lastpost column didn't adapt below ~600px, crowding a phone-size viewport. A media query stacks the post layout vertically and shrinks the lastpost column on narrow screens.
+- Poll results: a topic's poll (title, options, vote counts/percentages, total) is rendered above its posts when the dump has one — previously not rendered anywhere, silently dropping real content.
+- `--profile-position {left,right}` (default `left`, matching phpBB's own layout): which side of a post the poster's profile sidebar sits on in viewtopic — a CSS class flip (`post-wrap--right`) plus a matching border-side swap, gated so the default archive is unchanged.
 
 ## Custom color scheme (`--style-css`)
 
 The archive's own simple layout ships with a neutral default palette (`generator/static/style.css`). `--style-css FILE` swaps it for any stylesheet you point at. Every generated page `<link>`s `assets/style.css` rather than inlining it — the css is copied into `output/assets/` by `copy_assets()` on each run, and the same file can be dropped directly into an already-built archive's `assets/` to re-theme it without regenerating anything.
 
 `docs/contrib/phpbbmodders-style.css.example` is a real-world example: colors approximating phpbbmodders.net's actual live `prosilver_se_revolution` child theme (dark charcoal page, brick-red frame and header/category bars) plus its base `prosilver` theme's link/text colors — pulled from the real CSS, not guessed, and verified against a full regeneration + browser render, not just visual inspection of the source.
+
+The stylesheet link carries a `?v=<hash>` of `assets/style.css`'s own content (`env.globals["style_version"]`), so a re-themed or re-regenerated archive is picked up immediately instead of a browser serving a stale cached copy — `http.server` (and some real static hosts) sends only `Last-Modified`, no `Cache-Control`/`ETag`, so a browser can skip revalidation entirely. Doesn't affect the "drop a new `assets/style.css` into an already-built archive" workflow above: that leaves the HTML, and its query string, untouched either way.
 
 ## Board-wide announcement (`--announcement`)
 
@@ -67,7 +78,9 @@ Every topic page carries `og:title`, `og:type`, `og:site_name`, `og:description`
 
 ## Full-text search (`--search`)
 
-Adds `search.html`, linked from every page's breadcrumb bar only when `--search` is actually used (`env.globals["search_enabled"]`, checked in `base.html` — the link isn't shown, and no dead link is generated, on a run without the flag), and indexes every generated page with Pagefind, a static client-side search engine, via the `pagefind[bin]` Python package — a real compiled search binary installed through pip, no Node.js needed. Runs as a subprocess after every other page is written.
+Adds `search.html`, linked from every page's header (next to the "Static archive" tagline, styled like the site-title link) only when `--search` is actually used (`env.globals["search_enabled"]`, checked in `base.html` — the link isn't shown, and no dead link is generated, on a run without the flag), and indexes every generated page with Pagefind, a static client-side search engine, via the `pagefind[bin]` Python package — a real compiled search binary installed through pip, no Node.js needed. Runs as a subprocess after every other page is written.
+
+The link originally lived in the breadcrumb bar, where it read as a fake breadcrumb level ("Board index · Search") rather than a utility link — moved to the header, out of the navigation trail entirely.
 
 Result titles come from a `data-pagefind-meta="title:..."` attribute set on every page's `<body>` (via a new `body_attrs` template block in `base.html`) — without it, Pagefind defaults to each page's first `<h1>`, which on this archive is always just the site name, making every search result look identical. `search.html` itself is excluded from the index (`data-pagefind-ignore`) since it has no content of its own. The widget is re-themed via its own documented CSS custom properties (`--pagefind-ui-primary` etc.) rather than by fighting its markup — `docs/contrib/phpbbmodders-style.css.example`'s `#search` block is a real worked example.
 

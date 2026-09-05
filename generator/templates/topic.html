@@ -45,7 +45,7 @@
 
 {% for post in posts %}
 {% set author = post.author %}
-<div class="post-wrap" id="p{{ post.post_id }}">
+<div class="post-wrap{% if profile_position == 'right' %} post-wrap--right{% endif %}" id="p{{ post.post_id }}">
   <div class="postprofile">
     {% if author %}
       <div class="postauthor-name">
@@ -71,7 +71,7 @@
     {% endif %}
   </div>
   <div class="postbody" style="flex:1">
-    <div class="post-date">Posted: {{ post.post_time | timestamp }}</div>
+    <div class="post-date"><a href="#p{{ post.post_id }}" class="post-permalink">Posted: {{ post.post_time | timestamp }}</a></div>
     <div class="content">{{ post.rendered_html | safe }}</div>
     {% if author and author.user_sig %}
     <div class="sig">{{ author.sig_html | safe }}</div>
