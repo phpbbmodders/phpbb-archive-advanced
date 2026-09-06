@@ -84,6 +84,19 @@ ul.topiclist li.row:first-child { border-top: none; }
 ul.topiclist li.row .forum-title { font-weight: bold; flex: 1; }
 ul.topiclist li.row .forum-title a { color: #2E6EA6; }
 ul.topiclist li.row .forum-desc { font-size: 0.85em; color: #555; font-weight: normal; }
+.topic-flag {
+  display: inline-block;
+  font-size: 0.7em;
+  font-weight: bold;
+  padding: 1px 5px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+  text-transform: uppercase;
+}
+.topic-flag--sticky { background: #536482; color: #fff; }
+.topic-flag--announce { background: #D31141; color: #fff; }
+.topic-flag--locked { background: #999; color: #fff; }
 ul.topiclist li.row .col-count { min-width: 60px; text-align: right; color: #555; font-size: 0.9em; }
 ul.topiclist li.row .col-lastpost { min-width: 180px; max-width: 180px; font-size: 0.85em; color: #555; }
 
