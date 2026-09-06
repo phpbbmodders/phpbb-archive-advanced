@@ -11,10 +11,11 @@ set -Eeuo pipefail
 # approximating the live board's own color scheme, a board-wide notice
 # (config/announcement.txt) — empty by default, so nothing renders
 # until it's filled in — a sitemap.xml/robots.txt for
-# https://phpbbmodders.net/, and full-text search (search.html, via
-# Pagefind). --incremental keeps previously-downloaded
-# attachments/avatars/external images across runs instead of
-# re-fetching everything.
+# https://phpbbmodders.net/, full-text search (search.html, via
+# Pagefind), and the board's real logo/favicon fetched live from
+# phpbbmodders.com/.net (neither lives anywhere in the SQL dump).
+# --incremental keeps previously-downloaded attachments/avatars/external
+# images across runs instead of re-fetching everything.
 #
 # Usage:
 #   ./run.sh                 Full run using the config/ files below.
@@ -39,4 +40,7 @@ fi
     --announcement config/announcement.txt \
     --sitemap-url https://phpbbmodders.net/ \
     --search \
+    --logo-url https://www.phpbbmodders.com/modders-cog.gif \
+    --logo-natural-size \
+    --favicon-url https://phpbbmodders.net/favicon.ico \
     "${extra_args[@]}"

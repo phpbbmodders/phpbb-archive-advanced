@@ -5,13 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}{{ page_title }} - {{ site_name }}{% endblock %}</title>
 <link rel="stylesheet" href="{{ root }}assets/style.css?v={{ style_version }}">
+{% if favicon_ext %}<link rel="icon" href="{{ root }}favicon.{{ favicon_ext }}">{% endif %}
 {% block extra_head %}{% endblock %}
 </head>
 <body{% block body_attrs %} data-pagefind-meta="title:{{ page_title }} - {{ site_name }}"{% endblock %}>
 <div id="wrap">
 
 <div id="page-header">
-  <h1><a class="no-bracket" href="{{ root }}index.html">{{ site_name }}</a></h1>
+  <div class="header-titlebar">
+    {% if logo_ext %}<a href="{{ root }}index.html" class="no-bracket"><img src="{{ root }}assets/logo.{{ logo_ext }}" alt="" class="site-logo{% if logo_natural_size or logo_width %} site-logo--natural{% endif %}"{% if logo_width %} width="{{ logo_width }}" height="{{ logo_height }}"{% endif %}></a>{% endif %}
+    <div class="header-titletext">
+      <h1><a class="no-bracket" href="{{ root }}index.html">{{ site_name }}</a></h1>
+      {% if site_desc %}<p class="site-tagline">{{ site_desc | e }}</p>{% endif %}
+    </div>
+  </div>
   <p class="site-desc">Static archive{% if search_enabled %} &middot; <a href="{{ root }}search.html" class="header-search">Search</a>{% endif %}</p>
 </div>
 
