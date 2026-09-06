@@ -1361,6 +1361,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     env.globals["search_enabled"] = search
     env.globals["profile_position"] = profile_position
     env.globals["site_desc"] = db.get_config("site_desc") or None
+    env.globals["board_index_text"] = db.get_config("board_index_text") or "Board index"
     downloaded_favicon_ext = _download_image_asset(favicon_url, out, "favicon", "Favicon", default_ext="ico") if favicon_url else None
     env.globals["favicon_ext"] = downloaded_favicon_ext or (Path(favicon_path).suffix.lstrip(".") if favicon_path else None)
     downloaded_logo_ext = _download_image_asset(logo_url, out / "assets", "logo", "Logo") if logo_url else None
