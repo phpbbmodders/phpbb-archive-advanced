@@ -127,7 +127,8 @@ class TestAttachments:
     def test_attachment_not_duplicated_when_embedded(self, parser):
         # Attachment referenced inline should NOT appear in trailing section too
         result = parser.convert("[attachment=0]photo.png[/attachment]", uid="", post_id=1)
-        assert result.count("abc123.png") == 1
+        assert result.count('class="inline-attachment"') == 1
+        assert "post-attachments" not in result
 
 
 class TestNesting:
