@@ -56,8 +56,12 @@
         <a href="{{ root }}topics/{{ topic.topic_id }}.html">{{ topic.topic_title | e }}</a>
         <div class="forum-desc">
           Started by
-          {% if topic.topic_poster_name %}
-            <a href="{{ root }}users/{{ topic.topic_poster }}.html">{{ topic.topic_poster_name | e }}</a>
+          {% if topic.topic_first_poster_name %}
+            {% if topic.topic_poster and topic.topic_poster > 1 %}
+              <a href="{{ root }}users/{{ topic.topic_poster }}.html">{{ topic.topic_first_poster_name | e }}</a>
+            {% else %}
+              {{ topic.topic_first_poster_name | e }}
+            {% endif %}
           {% else %}
             Unknown
           {% endif %}
