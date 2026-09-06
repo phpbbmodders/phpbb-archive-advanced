@@ -210,6 +210,7 @@ def _rewrite_css_imports(css_path: Path) -> None:
 def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: set[str] | None = None,
                  style_css_path: str | None = None,
                  physical_to_real: dict[str, str] | None = None,
+                 favicon_path: str | None = None, logo_path: str | None = None,
                  theme: str = "light") -> None:
     """Copy CSS, images, smilies, avatars, and attachments into output/assets/.
     Attachments in excluded_physical_filenames (see load_exclusions) are
@@ -232,6 +233,18 @@ def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: s
         filename = "style-dark.css" if theme == "dark" else "style.css"
         own_style = Path(__file__).parent / "static" / filename
     shutil.copy2(own_style, assets / "style.css")
+
+    # --- Favicon / board logo (both optional) ---
+    # Kept as whatever format the source file already is (ico/png/svg/...)
+    # rather than forcing a conversion; the template links to it by that
+    # same extension (env.globals["favicon_ext"]/["logo_ext"], set in
+    # generate()).
+    if favicon_path:
+        favicon_src = Path(favicon_path)
+        shutil.copy2(favicon_src, output_dir / f"favicon{favicon_src.suffix}")
+    if logo_path:
+        logo_src = Path(logo_path)
+        shutil.copy2(logo_src, assets / f"logo{logo_src.suffix}")
 
     # --- CSS from prosilver theme ---
     # Keep CSS files at assets/ root (not assets/css/) so that their
@@ -773,6 +786,96 @@ def download_external_images(urls: set[str], out: Path, url_mirrors: dict[str, P
     return cached
 
 
+def _download_image_asset(url: str, dest_dir: Path, stem: str, label: str,
+                           default_ext: str = "png") -> str | None:
+    """Download an image from url into dest_dir/<stem>.<ext> — for an asset
+    that's real on the live board but doesn't live anywhere in a bare SQL
+    dump (a favicon, a logo). Extension comes from the URL's own path
+    when it looks like an image one, else the response's Content-Type,
+    else default_ext if neither is conclusive. Returns the extension
+    used, or None if the URL couldn't be fetched (dead link, or blocked
+    by something like a Cloudflare JS challenge that a plain HTTP client
+    can't pass) — same graceful-skip treatment as every other network
+    fetch in this generator, not a hard failure."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    ext_from_path = Path(urllib.parse.urlparse(url).path).suffix.lstrip(".").lower()
+    known_exts = {"ico", "png", "svg", "gif", "jpg", "jpeg"}
+    content_type_to_ext = {
+        "image/vnd.microsoft.icon": "ico", "image/x-icon": "ico",
+        "image/png": "png", "image/svg+xml": "svg",
+        "image/gif": "gif", "image/jpeg": "jpg",
+    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"}
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+            content_type = resp.headers.get("Content-Type", "").split(";")[0].strip()
+    except (urllib.error.URLError, OSError) as e:
+        logger.warning("%s URL unreachable: %s (%s)", label, url, e)
+        return None
+    ext = ext_from_path if ext_from_path in known_exts else content_type_to_ext.get(content_type, default_ext)
+    (dest_dir / f"{stem}.{ext}").write_bytes(data)
+    return ext
+
+
+def _svg_natural_size(path: Path) -> tuple[float, float] | None:
+    """Read an SVG's natural width/height from its own width/height
+    attributes if set, else derived from its viewBox — the common
+    real-world case (a real dump's own logo.svg only declares viewBox,
+    no explicit width/height). No new dependency: SVG is XML, and the
+    stdlib parses it directly."""
+    import re as _re
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.parse(path).getroot()
+    except Exception:
+        return None
+
+    def _num(s: str | None) -> float | None:
+        m = _re.match(r'[\d.]+', s or '')
+        return float(m.group()) if m else None
+
+    w, h = _num(root.get('width')), _num(root.get('height'))
+    if w and h:
+        return (w, h)
+    viewbox = root.get('viewBox')
+    if viewbox:
+        parts = viewbox.split()
+        if len(parts) == 4:
+            try:
+                return (float(parts[2]), float(parts[3]))
+            except ValueError:
+                pass
+    return None
+
+
+def _compute_logo_display_size(path: Path, max_height: int = 50, max_width: int = 200) -> tuple[int, int] | None:
+    """Read a logo's real dimensions (Pillow for raster formats, SVG's own
+    width/height/viewBox for vector ones) and scale them proportionally
+    to fit within max_height/max_width (whichever binds first), never
+    upscaling. A flat CSS max-height alone doesn't account for aspect
+    ratio — a wide, short logo could still overflow width-wise with
+    nothing but a height cap. Returns None (falls back to CSS-only
+    scaling) if neither approach can determine a size."""
+    try:
+        with Image.open(path) as im:
+            w, h = im.size
+    except Exception:
+        svg_size = _svg_natural_size(path)
+        if not svg_size:
+            return None
+        w, h = svg_size
+    if w <= 0 or h <= 0:
+        return None
+    scale = min(max_height / h, max_width / w, 1.0)
+    return (round(w * scale), round(h * scale))
+
+
 def get_user_rank(user: dict, ranks: list[dict]) -> dict | None:
     """Find the display rank for a user: special-assigned first, then by post count."""
     special_rank_id = user.get("user_rank", 0)
@@ -1139,6 +1242,8 @@ def run_pagefind(out: Path) -> None:
 def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
                               exclude_path: str | None = None,
                               style_css_path: str | None = None,
+                              favicon_path: str | None = None,
+                              logo_path: str | None = None,
                               theme: str = "light") -> tuple[PhpbbDatabase, Path, Path, str, set[int]]:
     """Shared setup for generate() and find_missing_avatars(): import the
     dump into SQLite and copy assets/. Returns (db, dump, out, site_name,
@@ -1178,7 +1283,7 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
     physical_to_real = {a["physical_filename"]: a["real_filename"] for a in db.get_all_attachments()}
 
     logger.info("Copying assets ...")
-    copy_assets(dump, out, excluded_physical_filenames, style_css_path, physical_to_real, theme)
+    copy_assets(dump, out, excluded_physical_filenames, style_css_path, physical_to_real, favicon_path, logo_path, theme)
 
     return db, dump, out, site_name, excluded_forum_ids
 
@@ -1189,7 +1294,9 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
              attachment_recovery_dir: str | None = None, style_css_path: str | None = None,
              announcement_path: str | None = None, sitemap_url: str | None = None,
              search: bool = False, profile_position: str = "left",
-             theme: str = "light") -> None:
+             favicon_path: str | None = None, favicon_url: str | None = None,
+             logo_path: str | None = None, logo_url: str | None = None,
+             logo_natural_size: bool = False, theme: str = "light") -> None:
     out = Path(output_dir)
     if out.exists():
         if incremental:
@@ -1213,7 +1320,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
             logger.info("Clearing previous output: %s", out)
             shutil.rmtree(out)
 
-    db, dump, out, site_name, excluded_forum_ids = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path, theme)
+    db, dump, out, site_name, excluded_forum_ids = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path, favicon_path, logo_path, theme)
 
     # --- Image/zip/rar attachments missing or corrupted in the source dump ---
     bad_attachments_map = find_bad_attachments(db, out)
@@ -1253,6 +1360,33 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     env = build_jinja_env(template_dir)
     env.globals["search_enabled"] = search
     env.globals["profile_position"] = profile_position
+    env.globals["site_desc"] = db.get_config("site_desc") or None
+    downloaded_favicon_ext = _download_image_asset(favicon_url, out, "favicon", "Favicon", default_ext="ico") if favicon_url else None
+    env.globals["favicon_ext"] = downloaded_favicon_ext or (Path(favicon_path).suffix.lstrip(".") if favicon_path else None)
+    downloaded_logo_ext = _download_image_asset(logo_url, out / "assets", "logo", "Logo") if logo_url else None
+    env.globals["logo_ext"] = downloaded_logo_ext or (Path(logo_path).suffix.lstrip(".") if logo_path else None)
+    env.globals["logo_natural_size"] = logo_natural_size
+    # phpBB's own configured logo display size (distinct from — and often
+    # much smaller than — the source image's raw pixel dimensions, e.g. a
+    # real board's own 324x308 file displayed at 84x80). Real per-board
+    # metadata already in the dump, not a guessed constant; used whenever
+    # present regardless of whether --logo/--logo-url provided the file,
+    # since it describes the *board's* intended size, not the file's.
+    logo_config_width = db.get_config("sitelogo_width")
+    logo_config_height = db.get_config("sitelogo_height")
+    if logo_config_width and logo_config_width != "0" and logo_config_height and logo_config_height != "0":
+        env.globals["logo_width"] = logo_config_width
+        env.globals["logo_height"] = logo_config_height
+    elif env.globals["logo_ext"]:
+        # No configured size in the dump — compute a proportional one from
+        # the actual logo file's real dimensions instead of leaving it to
+        # a flat CSS max-height (see _compute_logo_display_size).
+        computed = _compute_logo_display_size(out / "assets" / f"logo.{env.globals['logo_ext']}")
+        env.globals["logo_width"] = computed[0] if computed else None
+        env.globals["logo_height"] = computed[1] if computed else None
+    else:
+        env.globals["logo_width"] = None
+        env.globals["logo_height"] = None
 
     # Cache-bust assets/style.css with a hash of its own content so a
     # re-themed/re-regenerated archive is picked up immediately instead of
@@ -1541,6 +1675,34 @@ def main() -> None:
                          help="Which side of a post the poster's profile sidebar (avatar, rank, "
                               "post count) sits on in viewtopic. Defaults to left, matching "
                               "phpBB's own layout.")
+    favicon_group = parser.add_mutually_exclusive_group()
+    favicon_group.add_argument("--favicon", metavar="FILE",
+                         help="Image file (ico/png/svg/...) used as the archive's favicon. Kept "
+                              "in its original format, copied to output/favicon.<ext>. Omit for "
+                              "no favicon.")
+    favicon_group.add_argument("--favicon-url", metavar="URL",
+                         help="Fetch the favicon from a live URL instead of a local file (e.g. "
+                              "https://example.com/favicon.ico) — for a board's real favicon, "
+                              "which doesn't live anywhere in a bare SQL dump. A URL that can't "
+                              "be reached is skipped with a warning, same as any other network "
+                              "fetch in this generator, rather than failing the whole run.")
+    logo_group = parser.add_mutually_exclusive_group()
+    logo_group.add_argument("--logo", metavar="FILE",
+                         help="Image file (png/svg/gif/...) shown in the header in place of the "
+                              "plain site-name text, scaled via CSS to fit (max-height: 50px in "
+                              "the default stylesheet). Kept in its original format, copied to "
+                              "output/assets/logo.<ext>. Omit to keep the plain text site name.")
+    logo_group.add_argument("--logo-url", metavar="URL",
+                         help="Fetch the logo from a live URL instead of a local file — for a "
+                              "board's real logo, which doesn't live anywhere in a bare SQL dump. "
+                              "A URL that can't be reached (dead link, or blocked by something "
+                              "like a Cloudflare JS challenge that this can't pass) is skipped "
+                              "with a warning, same as any other network fetch in this generator, "
+                              "rather than failing the whole run.")
+    parser.add_argument("--logo-natural-size", action="store_true",
+                         help="Show the logo at its own original size instead of scaling it to "
+                              "fit the header (max-height: 50px in the default stylesheet). Off "
+                              "by default.")
     parser.add_argument("--theme", choices=["light", "dark"], default="light",
                          help="Which built-in neutral palette to use — light (default) or dark. "
                               "Has no effect when --style-css is given, since a custom stylesheet "
@@ -1558,7 +1720,8 @@ def main() -> None:
         generate(args.dump, args.output, args.avatar_overrides, args.exclude, args.url_mirrors,
                  args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
                  args.announcement, args.sitemap_url, args.search, args.profile_position,
-                 args.theme)
+                 args.favicon, args.favicon_url, args.logo, args.logo_url,
+                 args.logo_natural_size, args.theme)
 
 
 if __name__ == "__main__":
