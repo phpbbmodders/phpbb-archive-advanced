@@ -1356,6 +1356,7 @@ def check_links(output_dir: str) -> None:
     checks internal (relative) links; external URLs are a separate,
     already-handled problem (see --ignore-hosts/--url-mirrors). Needs an
     already-generated output/ — run a normal generate() first."""
+    import urllib.parse
     out = Path(output_dir)
     if not out.exists():
         raise FileNotFoundError(f"{out} does not exist — run a normal generate() first")
@@ -1385,8 +1386,13 @@ def check_links(output_dir: str) -> None:
             if url.startswith(("http://", "https://", "mailto:", "javascript:", "data:")):
                 continue
             path_part, _, anchor = url.partition("#")
+            path_part = path_part.split("?", 1)[0]  # drop a query string (e.g. style.css?v=<hash>) — never part of the on-disk path
             if path_part:
-                target = posixpath.normpath((current_dir / path_part).as_posix())
+                # Decode first — a percent-encoded href (e.g. an attachment
+                # named "Star Rates.zip" served as ".../Star%20Rates.zip")
+                # must match the real on-disk name in all_files, not its
+                # encoded form.
+                target = posixpath.normpath((current_dir / urllib.parse.unquote(path_part)).as_posix())
             else:
                 target = rel_path  # self-reference (bare #anchor)
             if target not in all_files:
