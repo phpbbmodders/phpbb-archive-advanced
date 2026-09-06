@@ -7,6 +7,7 @@ and [attachment] tags.
 import re
 import html
 import logging
+import urllib.parse
 
 logger = logging.getLogger(__name__)
 
@@ -108,18 +109,19 @@ class PhpbbBBCodeParser:
             physical = att["physical_filename"]
             real = att["real_filename"]
             is_image = real.lower().endswith(IMAGE_EXTENSIONS)
-            if is_image and physical in self.bad_attachments:
+            if physical in self.bad_attachments:
                 continue
-            path = f"{self.assets_prefix}/attachments/{physical}"
+            path = f"{self.assets_prefix}/attachments/{physical}/{urllib.parse.quote(real)}"
             if is_image:
                 trailing.append(
                     f'<div class="inline-attachment">'
-                    f'<img src="{path}" alt="{html.escape(real)}" loading="lazy" />'
-                    f'<br/><em>{html.escape(real)}</em></div>'
+                    f'<a href="{path}" download="{html.escape(real)}">'
+                    f'<img src="{path}" alt="{html.escape(real)}" loading="lazy" /></a>'
+                    f'<br/><em>Attachment: {html.escape(real)}</em></div>'
                 )
             else:
                 trailing.append(
-                    f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}" download="{html.escape(real)}">{html.escape(real)}</a></div>'
+                    f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}" download="{html.escape(real)}">Attachment: {html.escape(real)}</a></div>'
                 )
 
         if trailing:
@@ -294,14 +296,15 @@ class PhpbbBBCodeParser:
                 physical = post_attachments[index]["physical_filename"]
                 real = post_attachments[index]["real_filename"]
                 is_image = real.lower().endswith(IMAGE_EXTENSIONS)
-                if is_image and physical in self.bad_attachments:
+                if physical in self.bad_attachments:
                     return ''
-                path = f"{self.assets_prefix}/attachments/{physical}"
+                path = f"{self.assets_prefix}/attachments/{physical}/{urllib.parse.quote(real)}"
                 if is_image:
                     return (f'<div class="inline-attachment">'
-                            f'<img src="{path}" alt="{html.escape(real)}" loading="lazy" />'
-                            f'<br/><em>{html.escape(real)}</em></div>')
-                return f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}" download="{html.escape(real)}">{html.escape(real)}</a></div>'
+                            f'<a href="{path}" download="{html.escape(real)}">'
+                            f'<img src="{path}" alt="{html.escape(real)}" loading="lazy" /></a>'
+                            f'<br/><em>Attachment: {html.escape(real)}</em></div>')
+                return f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}" download="{html.escape(real)}">Attachment: {html.escape(real)}</a></div>'
             logger.warning("XML attachment index %d out of range for post %s", index, post_id)
             if filename.lower().endswith(IMAGE_EXTENSIONS):
                 return ''
@@ -379,15 +382,15 @@ class PhpbbBBCodeParser:
                 return f'<span class="attachment-missing">[Attachment: {html.escape(filename)}]</span>'
 
             is_image = real.lower().endswith(IMAGE_EXTENSIONS)
-            if is_image and physical in self.bad_attachments:
+            if physical in self.bad_attachments:
                 return ''
 
-            path = f"{self.assets_prefix}/attachments/{physical}"
+            path = f"{self.assets_prefix}/attachments/{physical}/{urllib.parse.quote(real)}"
             # If it looks like an image, embed it; otherwise link it
             if is_image:
-                return f'<div class="inline-attachment"><img src="{path}" alt="{html.escape(real)}" loading="lazy" /><br/><em>{html.escape(real)}</em></div>'
+                return f'<div class="inline-attachment"><a href="{path}" download="{html.escape(real)}"><img src="{path}" alt="{html.escape(real)}" loading="lazy" /></a><br/><em>Attachment: {html.escape(real)}</em></div>'
             else:
-                return f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}" download="{html.escape(real)}">{html.escape(real)}</a></div>'
+                return f'<div class="inline-attachment">{_attachment_ext_badge(real)}<a href="{path}" download="{html.escape(real)}">Attachment: {html.escape(real)}</a></div>'
 
         text = re.sub(
             r'\[attachment=(\d+)\](.*?)\[/attachment\]',

@@ -208,7 +208,8 @@ def _rewrite_css_imports(css_path: Path) -> None:
 
 
 def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: set[str] | None = None,
-                 style_css_path: str | None = None) -> None:
+                 style_css_path: str | None = None,
+                 physical_to_real: dict[str, str] | None = None) -> None:
     """Copy CSS, images, smilies, avatars, and attachments into output/assets/.
     Attachments in excluded_physical_filenames (see load_exclusions) are
     skipped entirely rather than copied and left unlinked."""
@@ -288,10 +289,18 @@ def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: s
     # --- Attachments ---
     # Some dumps end up with attachment files duplicated inside stray nested
     # subdirectories (e.g. dump/files/files/, dump/files/files/files/) from
-    # how they were originally collected. Attachment src paths are always
-    # flat (assets/attachments/<physical_filename>), so flatten by basename
-    # instead of preserving the dump's directory structure, keeping the
-    # shallowest copy on a name collision.
+    # how they were originally collected; flatten by basename instead of
+    # preserving the dump's directory structure, keeping the shallowest
+    # copy on a name collision. Each file is copied into its own
+    # subdirectory named after its physical_filename (guaranteed unique),
+    # containing a single file named after its real_filename — so the
+    # served URL ends in the attachment's real name (e.g.
+    # assets/attachments/1706_79dc.../mchat_deathwing.gif) rather than the
+    # meaningless physical hash, and "Save Image/Link As" both save under
+    # the right name without needing the `download` attribute. Falls back
+    # to the old flat layout (assets/attachments/<physical_filename>) for
+    # a physical_filename with no known real_filename (shouldn't normally
+    # happen — every attachment file is referenced by a DB row).
     files_src = dump_dir / "files"
     if files_src.exists():
         dest = assets / "attachments"
@@ -301,9 +310,11 @@ def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: s
             for name in filenames:
                 if excluded_physical_filenames and name in excluded_physical_filenames:
                     continue
-                target = dest / name
+                real = (physical_to_real or {}).get(name)
+                target = dest / name / real if real else dest / name
                 if target.exists():
                     continue
+                target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(Path(dirpath) / name, target)
                 copied += 1
         logger.info("Copied attachments (%d files)", copied)
@@ -319,55 +330,86 @@ def build_attachments_map(db: PhpbbDatabase, post_ids: list[int]) -> dict[int, l
     return result
 
 
-def find_bad_image_attachments(db: PhpbbDatabase, out: Path) -> set[str]:
-    """Return physical_filenames of image attachments that are missing from
-    assets/attachments/ or fail to decode (e.g. corrupted in the source
-    dump). These get dropped from post bodies instead of rendered as a
-    broken image."""
-    attachments_dir = out / "assets" / "attachments"
-    bad: set[str] = set()
-    checked = 0
-    for att in db.get_all_attachments():
-        real = att["real_filename"]
-        if not real.lower().endswith(IMAGE_EXTENSIONS):
-            continue
-        checked += 1
-        path = attachments_dir / att["physical_filename"]
-        if not path.exists():
-            bad.add(att["physical_filename"])
-            continue
+def _attachment_is_valid(path: Path, real_filename: str) -> bool:
+    """True if path decodes cleanly for its apparent type: image via
+    Pillow, zip integrity via the zipfile module, rar integrity via the
+    system `7z` binary if present (testzip()/`7z t` both catch the "valid
+    archive data followed by trailing garbage" shape actually seen in a
+    real dump — 205 of 209 .zip and 24 of 24 .rar attachments failed this
+    check, and 92% of each had a genuinely working copy sitting in the
+    --attachment-recovery backup the whole time). Any other extension, or
+    .rar without `7z` on PATH, is assumed valid, since nothing here can
+    meaningfully check it."""
+    lower = real_filename.lower()
+    if lower.endswith(IMAGE_EXTENSIONS):
         try:
             with Image.open(path) as im:
                 im.load()
+            return True
         except Exception:
-            bad.add(att["physical_filename"])
+            return False
+    if lower.endswith(".zip"):
+        import zipfile
+        try:
+            with zipfile.ZipFile(path) as z:
+                return z.testzip() is None
+        except Exception:
+            return False
+    if lower.endswith(".rar"):
+        import shutil as _shutil
+        if not _shutil.which("7z"):
+            return True
+        try:
+            result = subprocess.run(["7z", "t", str(path)], capture_output=True, text=True, timeout=30)
+            return "Everything is Ok" in result.stdout
+        except Exception:
+            return False
+    return True
+
+
+def find_bad_attachments(db: PhpbbDatabase, out: Path) -> dict[str, str]:
+    """Return {physical_filename: real_filename} for image/zip/rar attachments
+    that are missing from assets/attachments/ or fail to validate for
+    their type (see _attachment_is_valid). These get dropped from post
+    bodies instead of rendered as a broken link, unless
+    --attachment-recovery finds a working copy."""
+    attachments_dir = out / "assets" / "attachments"
+    bad: dict[str, str] = {}
+    checked = 0
+    for att in db.get_all_attachments():
+        real = att["real_filename"]
+        lower = real.lower()
+        if not (lower.endswith(IMAGE_EXTENSIONS) or lower.endswith((".zip", ".rar"))):
+            continue
+        checked += 1
+        path = attachments_dir / att["physical_filename"] / real
+        if not path.exists() or not _attachment_is_valid(path, real):
+            bad[att["physical_filename"]] = real
     if bad:
-        logger.warning("Dropping %d of %d image attachments (missing or corrupted)", len(bad), checked)
+        logger.warning("Dropping %d of %d image/zip/rar attachments (missing or corrupted)", len(bad), checked)
     return bad
 
 
-def recover_bad_attachments(bad: set[str], recovery_dir: Path, out: Path) -> set[str]:
-    """For each physical_filename in `bad` (see find_bad_image_attachments),
-    check recovery_dir for a same-named copy that decodes cleanly — e.g. a
-    backup collected separately from the main dump/files/ that turns out
-    not to share the same corruption. A working copy is copied over the
-    broken one in assets/attachments/ and removed from the returned bad
-    set; anything not found or still broken there is left as-is."""
+def recover_bad_attachments(bad: dict[str, str], recovery_dir: Path, out: Path) -> set[str]:
+    """For each physical_filename -> real_filename in `bad` (see
+    find_bad_attachments), check recovery_dir for a same-named copy that
+    validates cleanly — e.g. a backup collected separately from the main
+    dump/files/ that turns out not to share the same corruption. A
+    working copy is copied over the broken one in assets/attachments/ and
+    left out of the returned still-bad set; anything not found or still
+    broken there stays in it."""
     if not bad:
-        return bad
+        return set()
     dest_dir = out / "assets" / "attachments"
     recovered = 0
-    still_bad = set(bad)
-    for name in bad:
+    still_bad = set(bad.keys())
+    for name, real in bad.items():
         candidate = recovery_dir / name
-        if not candidate.exists():
+        if not candidate.exists() or not _attachment_is_valid(candidate, real):
             continue
-        try:
-            with Image.open(candidate) as im:
-                im.load()
-        except Exception:
-            continue
-        shutil.copy2(candidate, dest_dir / name)
+        target = dest_dir / name / real
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(candidate, target)
         still_bad.discard(name)
         recovered += 1
     if recovered:
@@ -378,8 +420,8 @@ def recover_bad_attachments(bad: set[str], recovery_dir: Path, out: Path) -> set
 def find_bad_avatars(users: list[dict], out: Path) -> set[str]:
     """Return avatar keys that are missing from assets/avatars/ or fail to
     decode: "{userid}.{ext}" for avatar.driver.upload, or the gallery-relative
-    path (e.g. "phpbb/gear_red.png") for avatar.driver.local. Mirrors
-    find_bad_image_attachments."""
+    path (e.g. "phpbb/gear_red.png") for avatar.driver.local. Mirrors the
+    image-decode half of find_bad_attachments."""
     avatars_dir = out / "assets" / "avatars"
     bad: set[str] = set()
     checked = 0
@@ -1094,8 +1136,10 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
         logger.info("Excluding %d forum(s)/categor(y/ies) from the archive (%d listed, %d after including descendants)",
                     len(excluded_forum_ids), len(seed_ids), len(excluded_forum_ids))
 
+    physical_to_real = {a["physical_filename"]: a["real_filename"] for a in db.get_all_attachments()}
+
     logger.info("Copying assets ...")
-    copy_assets(dump, out, excluded_physical_filenames, style_css_path)
+    copy_assets(dump, out, excluded_physical_filenames, style_css_path, physical_to_real)
 
     return db, dump, out, site_name, excluded_forum_ids
 
@@ -1131,10 +1175,12 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
 
     db, dump, out, site_name, excluded_forum_ids = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path)
 
-    # --- Image attachments missing or corrupted in the source dump ---
-    bad_attachments = find_bad_image_attachments(db, out)
+    # --- Image/zip/rar attachments missing or corrupted in the source dump ---
+    bad_attachments_map = find_bad_attachments(db, out)
     if attachment_recovery_dir:
-        bad_attachments = recover_bad_attachments(bad_attachments, Path(attachment_recovery_dir), out)
+        bad_attachments = recover_bad_attachments(bad_attachments_map, Path(attachment_recovery_dir), out)
+    else:
+        bad_attachments = set(bad_attachments_map.keys())
 
     # --- Lookup tables ---
     smilies = db.get_smilies()
