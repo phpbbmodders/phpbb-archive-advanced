@@ -209,7 +209,8 @@ def _rewrite_css_imports(css_path: Path) -> None:
 
 def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: set[str] | None = None,
                  style_css_path: str | None = None,
-                 physical_to_real: dict[str, str] | None = None) -> None:
+                 physical_to_real: dict[str, str] | None = None,
+                 theme: str = "light") -> None:
     """Copy CSS, images, smilies, avatars, and attachments into output/assets/.
     Attachments in excluded_physical_filenames (see load_exclusions) are
     skipped entirely rather than copied and left unlinked."""
@@ -220,10 +221,16 @@ def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: s
     # Every page links assets/style.css rather than inlining it, so
     # re-theming an already-built archive is a matter of dropping in a
     # new assets/style.css — no regeneration required. Defaults to the
-    # tool's neutral built-in palette; --style-css overrides it with a
-    # site-specific one (e.g. colors approximating a live board's own
-    # theme) without changing anyone else's default output.
-    own_style = Path(style_css_path) if style_css_path else Path(__file__).parent / "static" / "style.css"
+    # tool's neutral built-in palette (light, or dark via --theme);
+    # --style-css overrides both with a site-specific one (e.g. colors
+    # approximating a live board's own theme) without changing anyone
+    # else's default output — --theme has no effect once --style-css is
+    # given, since a custom stylesheet is its own fixed palette.
+    if style_css_path:
+        own_style = Path(style_css_path)
+    else:
+        filename = "style-dark.css" if theme == "dark" else "style.css"
+        own_style = Path(__file__).parent / "static" / filename
     shutil.copy2(own_style, assets / "style.css")
 
     # --- CSS from prosilver theme ---
@@ -1131,7 +1138,8 @@ def run_pagefind(out: Path) -> None:
 
 def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
                               exclude_path: str | None = None,
-                              style_css_path: str | None = None) -> tuple[PhpbbDatabase, Path, Path, str, set[int]]:
+                              style_css_path: str | None = None,
+                              theme: str = "light") -> tuple[PhpbbDatabase, Path, Path, str, set[int]]:
     """Shared setup for generate() and find_missing_avatars(): import the
     dump into SQLite and copy assets/. Returns (db, dump, out, site_name,
     excluded_forum_ids)."""
@@ -1170,7 +1178,7 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
     physical_to_real = {a["physical_filename"]: a["real_filename"] for a in db.get_all_attachments()}
 
     logger.info("Copying assets ...")
-    copy_assets(dump, out, excluded_physical_filenames, style_css_path, physical_to_real)
+    copy_assets(dump, out, excluded_physical_filenames, style_css_path, physical_to_real, theme)
 
     return db, dump, out, site_name, excluded_forum_ids
 
@@ -1180,7 +1188,8 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
              incremental: bool = False, ignored_hosts_path: str | None = None,
              attachment_recovery_dir: str | None = None, style_css_path: str | None = None,
              announcement_path: str | None = None, sitemap_url: str | None = None,
-             search: bool = False, profile_position: str = "left") -> None:
+             search: bool = False, profile_position: str = "left",
+             theme: str = "light") -> None:
     out = Path(output_dir)
     if out.exists():
         if incremental:
@@ -1204,7 +1213,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
             logger.info("Clearing previous output: %s", out)
             shutil.rmtree(out)
 
-    db, dump, out, site_name, excluded_forum_ids = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path)
+    db, dump, out, site_name, excluded_forum_ids = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path, theme)
 
     # --- Image/zip/rar attachments missing or corrupted in the source dump ---
     bad_attachments_map = find_bad_attachments(db, out)
@@ -1532,6 +1541,10 @@ def main() -> None:
                          help="Which side of a post the poster's profile sidebar (avatar, rank, "
                               "post count) sits on in viewtopic. Defaults to left, matching "
                               "phpBB's own layout.")
+    parser.add_argument("--theme", choices=["light", "dark"], default="light",
+                         help="Which built-in neutral palette to use — light (default) or dark. "
+                              "Has no effect when --style-css is given, since a custom stylesheet "
+                              "is its own fixed palette.")
     args = parser.parse_args()
     if args.missing_avatars:
         find_missing_avatars(args.dump, args.output, args.avatar_overrides)
@@ -1544,7 +1557,8 @@ def main() -> None:
     else:
         generate(args.dump, args.output, args.avatar_overrides, args.exclude, args.url_mirrors,
                  args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
-                 args.announcement, args.sitemap_url, args.search, args.profile_position)
+                 args.announcement, args.sitemap_url, args.search, args.profile_position,
+                 args.theme)
 
 
 if __name__ == "__main__":
