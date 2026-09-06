@@ -76,18 +76,37 @@ class PhpbbBBCodeParser:
         actually in this archive, rewrite it to a relative topics/N.html
         link (preserving a #pNNNN post anchor if present) so cross-topic
         references stay working inside the static archive. Otherwise
-        returns url unchanged — including a viewtopic.php link to a topic
-        that isn't in this archive (excluded, or a different board), which
-        stays a normal external link rather than becoming a broken one."""
+        returns url with any phpBB session id stripped (see _strip_sid) —
+        including a viewtopic.php link to a topic that isn't in this
+        archive (excluded, or a different board), which stays a normal
+        external link rather than becoming a broken one."""
         topic_match = re.search(r'viewtopic\.php\?[^"#]*\bt=(\d+)', url)
-        if not topic_match:
+        if topic_match:
+            topic_id = int(topic_match.group(1))
+            if topic_id in self.internal_topic_ids:
+                fragment_match = re.search(r'(#p\d+)', url)
+                fragment = fragment_match.group(1) if fragment_match else ''
+                return f'{self.topics_prefix}/{topic_id}.html{fragment}'
+        return self._strip_sid(url)
+
+    @staticmethod
+    def _strip_sid(url: str) -> str:
+        """Remove a phpBB session id (sid=<32 lowercase hex chars>, an md5
+        hash — phpBB's own convention for every one of its scripts:
+        viewtopic.php, index.php, admin_*.php, third-party MOD scripts,
+        on any phpBB install anywhere, not just this board) from a URL's
+        query string. Meaningless in an archived/static context (session
+        ids expire almost immediately), and not worth keeping around.
+        Uses urllib to rebuild the query string properly rather than
+        regex-splicing it, so the surrounding params stay well-formed."""
+        parsed = urllib.parse.urlparse(url)
+        if not parsed.query:
             return url
-        topic_id = int(topic_match.group(1))
-        if topic_id not in self.internal_topic_ids:
+        params = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        filtered = [(k, v) for k, v in params if not (k == "sid" and re.fullmatch(r'[0-9a-f]{32}', v))]
+        if len(filtered) == len(params):
             return url
-        fragment_match = re.search(r'(#p\d+)', url)
-        fragment = fragment_match.group(1) if fragment_match else ''
-        return f'{self.topics_prefix}/{topic_id}.html{fragment}'
+        return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(filtered)))
 
     def _append_trailing_attachments(self, result: str, post_id: int, original_text: str) -> str:
         """Append attachments that had no [attachment=N] inline tag."""
