@@ -209,6 +209,15 @@ class PhpbbBBCodeParser:
         text = re.sub(r'<e>[^<]*</e>', '', text)
         # Strip <i> wrappers (keep inner content)
         text = re.sub(r'<i>(.*?)</i>', r'\1', text, flags=re.DOTALL)
+        # <LINK_TEXT text="shortened display text">full raw URL</LINK_TEXT>
+        # phpBB truncates a long auto-linked URL for display (e.g. "http://
+        # example.com/... ... /page") while keeping the full URL as the
+        # element's own text content — replace the whole element with just
+        # the shortened text attribute, which is what should actually be
+        # shown. Not caught by the generic "strip unknown XML tags" cleanup
+        # further below: that regex requires an all-caps/digit tag name,
+        # and LINK_TEXT's underscore falls outside that character class.
+        text = re.sub(r'<LINK_TEXT text="([^"]*)">.*?</LINK_TEXT>', r'\1', text, flags=re.DOTALL)
         # Strip root <r>/<t> wrappers
         text = re.sub(r'^<[rt]>', '', text.lstrip())
         text = re.sub(r'</[rt]>$', '', text.rstrip())
