@@ -33,7 +33,7 @@ Then run the generator:
 
 That's it. Open `output/index.html` in a browser to browse the archive. `generate.sh` wraps the same command and sets up `.venv` for you if it doesn't exist yet.
 
-Attachments, avatars, and `[img]`-tagged images that are missing or fail to decode are dropped from the archive rather than left as broken links. Attachments/avatars/external images that only exist as external URLs (remote avatars, hotlinked signature images) are downloaded once and cached locally so the archive stays self-contained — a URL that's genuinely dead just gets skipped, and is retried again on every future run (see `--incremental` below if that's not what you want). Every post/attachment/avatar image is marked `loading="lazy"`, so a long thread with dozens of embedded images doesn't force the browser to fetch all of them up front.
+Attachments (images, zip, rar), avatars, and `[img]`-tagged images that are missing or fail to decode/validate are dropped from the archive rather than left as broken links. Attachments are served under their real original filename (not the on-disk physical hash), so "Save Image/Link As" gives back the actual filename. Attachments/avatars/external images that only exist as external URLs (remote avatars, hotlinked signature images) are downloaded once and cached locally so the archive stays self-contained — a URL that's genuinely dead just gets skipped, and is retried again on every future run (see `--incremental` below if that's not what you want). Every post/attachment/avatar image is marked `loading="lazy"`, so a long thread with dozens of embedded images doesn't force the browser to fetch all of them up front.
 
 ## Usage
 
@@ -49,6 +49,9 @@ usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--style-css FILE] [--announcement FILE]
                    [--sitemap-url URL] [--search]
                    [--profile-position {left,right}]
+                   [--favicon FILE | --favicon-url URL]
+                   [--logo FILE | --logo-url URL] [--logo-natural-size]
+                   [--theme {light,dark}]
 
 Generate a static HTML archive from a phpBB MySQL dump
 
@@ -146,6 +149,35 @@ options:
                         Which side of a post the poster's profile sidebar
                         (avatar, rank, post count) sits on in viewtopic.
                         Defaults to left, matching phpBB's own layout.
+  --favicon FILE        Image file (ico/png/svg/...) used as the archive's
+                        favicon. Kept in its original format, copied to
+                        output/favicon.<ext>. Omit for no favicon.
+  --favicon-url URL     Fetch the favicon from a live URL instead of a local
+                        file (e.g. https://example.com/favicon.ico) — for a
+                        board's real favicon, which doesn't live anywhere in a
+                        bare SQL dump. A URL that can't be reached is skipped
+                        with a warning, same as any other network fetch in
+                        this generator, rather than failing the whole run.
+  --logo FILE           Image file (png/svg/gif/...) shown in the header in
+                        place of the plain site-name text, scaled via CSS to
+                        fit (max-height: 50px in the default stylesheet). Kept
+                        in its original format, copied to
+                        output/assets/logo.<ext>. Omit to keep the plain text
+                        site name.
+  --logo-url URL        Fetch the logo from a live URL instead of a local file
+                        — for a board's real logo, which doesn't live anywhere
+                        in a bare SQL dump. A URL that can't be reached (dead
+                        link, or blocked by something like a Cloudflare JS
+                        challenge that this can't pass) is skipped with a
+                        warning, same as any other network fetch in this
+                        generator, rather than failing the whole run.
+  --logo-natural-size   Show the logo at its own original size instead of
+                        scaling it to fit the header (max-height: 50px in the
+                        default stylesheet). Off by default.
+  --theme {light,dark}  Which built-in neutral palette to use — light
+                        (default) or dark. Has no effect when --style-css is
+                        given, since a custom stylesheet is its own fixed
+                        palette.
 ```
 
 ### Fixing avatars the generator can't fetch on its own
@@ -215,6 +247,28 @@ Every generated page links `assets/style.css` rather than inlining it, so re-the
 
 [`docs/contrib/phpbbmodders-style.css.example`](docs/contrib/phpbbmodders-style.css.example) is a real-world example: colors approximating a live board's own `prosilver` child theme (dark page background, an accent-colored frame, and matching header/category-bar colors), pulled from that theme's actual CSS rather than guessed.
 
+`--theme dark` swaps the built-in neutral palette for a dark one, without needing a custom `--style-css`:
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/ --theme dark
+```
+
+Has no effect when `--style-css` is also given — a custom stylesheet is its own fixed palette either way.
+
+### Favicon and board logo
+
+Neither a board's favicon nor its logo lives anywhere in a bare SQL dump. `--favicon`/`--logo` take a local image file; `--favicon-url`/`--logo-url` fetch one live instead — useful since the archive is usually built well after the original board stopped actively maintaining local copies of either:
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/ \
+    --favicon-url https://your-board.example.com/favicon.ico \
+    --logo-url https://your-board.example.com/logo.png
+```
+
+A URL that can't be reached (dead link, or blocked by something like a Cloudflare JS challenge) is skipped with a warning — same graceful treatment as every other network fetch in this generator — rather than failing the whole run.
+
+The logo's on-page size prefers phpBB's own configured `sitelogo_width`/`sitelogo_height` when the dump has them set; otherwise it's computed proportionally from the actual image file's real dimensions (scaled to fit within a 50px height / 200px width box, never upscaled) rather than a flat CSS cap that ignores aspect ratio. `--logo-natural-size` shows it unscaled at its own original size instead.
+
 ### Board-wide announcement
 
 `--announcement` shows a notice on the index, every forum page, and every topic page — written fresh for the archive (e.g. "this board is now read-only"), not pulled from the dump:
@@ -263,7 +317,8 @@ output/
 ├── forums/<id>.html    # One page per forum (topic list)
 ├── topics/<id>.html    # One page per thread (all posts)
 ├── users/<id>.html     # User profile pages
-├── assets/             # CSS, images, smilies, avatars, attachments
+├── assets/             # CSS, images, smilies, avatars, attachments, logo
+├── favicon.<ext>        # Only with --favicon/--favicon-url
 ├── sitemap.xml          # Only with --sitemap-url
 ├── robots.txt            # Only with --sitemap-url
 ├── search.html           # Only with --search
