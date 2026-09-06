@@ -456,6 +456,35 @@ def find_bad_avatars(users: list[dict], out: Path) -> set[str]:
     return bad
 
 
+def find_bad_smilies(smilies: list[dict], out: Path) -> set[str]:
+    """Return smiley_url filenames that are missing from
+    assets/images/smilies/ or fail to decode. Mirrors the image-decode
+    half of find_bad_attachments/find_bad_avatars; unlike those, smilies
+    come from phpBB's own distributed image pack rather than user
+    uploads, so this exists for robustness on other dumps rather than a
+    problem actually seen in any real one checked so far."""
+    smilies_dir = out / "assets" / "images" / "smilies"
+    bad: set[str] = set()
+    checked_filenames: set[str] = set()
+    for s in smilies:
+        filename = s.get("smiley_url", "")
+        if not filename or filename in checked_filenames:
+            continue
+        checked_filenames.add(filename)
+        path = smilies_dir / filename
+        if not path.exists():
+            bad.add(filename)
+            continue
+        try:
+            with Image.open(path) as im:
+                im.load()
+        except Exception:
+            bad.add(filename)
+    if bad:
+        logger.warning("Dropping %d of %d smilies (missing or corrupted)", len(bad), len(checked_filenames))
+    return bad
+
+
 _IMAGE_FORMAT_EXT = {"JPEG": "jpg", "PNG": "png", "GIF": "gif", "BMP": "bmp", "WEBP": "webp"}
 
 
@@ -878,7 +907,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   forums: list[dict], bad_attachments: set[str],
                   bad_avatars: set[str], remote_avatar_exts: dict[int, str],
                   avatar_overrides: dict[int, str], external_images: dict[str, str],
-                  internal_topic_ids: set[int],
+                  internal_topic_ids: set[int], bad_smilies: set[str],
                   site_name: str = "", announcement_html: str | None = None,
                   site_url: str | None = None) -> int:
     """Render all topic pages. Returns total post count."""
@@ -907,6 +936,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
             bad_attachments=bad_attachments,
             external_images=external_images,
             internal_topic_ids=internal_topic_ids,
+            bad_smilies=bad_smilies,
         )
 
         rendered_posts = []
@@ -982,7 +1012,7 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                  custom_bbcodes: list[dict], bad_avatars: set[str],
                  remote_avatar_exts: dict[int, str], avatar_overrides: dict[int, str],
                  external_images: dict[str, str], internal_topic_ids: set[int],
-                 site_name: str = "") -> None:
+                 bad_smilies: set[str], site_name: str = "") -> None:
     users_dir = out / "users"
     users_dir.mkdir(exist_ok=True)
     tmpl = env.get_template("user.html")
@@ -994,6 +1024,7 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
         assets_prefix="../assets",
         external_images=external_images,
         internal_topic_ids=internal_topic_ids,
+        bad_smilies=bad_smilies,
     )
 
     for user in db.get_all_users():
@@ -1192,6 +1223,9 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     url_mirrors = load_url_mirrors(Path(url_mirrors_path)) if url_mirrors_path else None
     ignored_hosts = load_ignored_hosts(Path(ignored_hosts_path)) if ignored_hosts_path else None
 
+    # --- Smilies missing or corrupted in the source dump ---
+    bad_smilies = find_bad_smilies(smilies, out)
+
     # --- Avatars missing or corrupted in the source dump ---
     bad_avatars = find_bad_avatars(list(users.values()), out)
     remote_avatar_exts = download_remote_avatars(list(users.values()), out, url_mirrors, ignored_hosts)
@@ -1236,6 +1270,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
         assets_prefix="assets",  # index-level path; topics/forums use their own parser
         external_images=external_images,
         internal_topic_ids=internal_topic_ids,
+        bad_smilies=bad_smilies,
     )
 
     # Enrich forums with the topic_id of their last post (for linking)
@@ -1259,9 +1294,9 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
 
     site_url = sitemap_url if not sitemap_url or sitemap_url.endswith("/") else sitemap_url + "/"
 
-    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, site_name=site_name, announcement_html=announcement_html, site_url=site_url)
+    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, site_name=site_name, announcement_html=announcement_html, site_url=site_url)
     render_forums(env, out, db, users, shared_parser, forums, site_name=site_name, announcement_html=announcement_html)
-    render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, site_name=site_name)
+    render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, site_name=site_name)
     render_index(env, out, forum_tree or [], total_posts, site_name=site_name, announcement_html=announcement_html)
 
     if site_url:

@@ -31,7 +31,8 @@ class PhpbbBBCodeParser:
                  assets_prefix: str = "../assets",
                  bad_attachments: set[str] | None = None,
                  external_images: dict[str, str] | None = None,
-                 internal_topic_ids: set[int] | None = None):
+                 internal_topic_ids: set[int] | None = None,
+                 bad_smilies: set[str] | None = None):
         # Map smiley code → (image filename, display width, display height).
         # phpBB stores a smiley pack's *intended* display size separately
         # from its source image files, which are often much larger (a
@@ -48,6 +49,10 @@ class PhpbbBBCodeParser:
         self.smiley_sizes_by_filename = {
             filename: (w, h) for filename, w, h in self.smilies.values() if w and h
         }
+        # smiley_url filenames missing/corrupted in the dump (see
+        # find_bad_smilies) — left as raw code text rather than rendered as
+        # a broken image, same treatment as an unrecognized code.
+        self.bad_smilies = bad_smilies or set()
         # Map post_id → list of attachment dicts (ordered)
         self.attachments = attachments
         # Custom BBCodes: list of dicts with bbcode_tag, bbcode_match, bbcode_tpl
@@ -354,6 +359,8 @@ class PhpbbBBCodeParser:
             if not entry:
                 return m.group(1)
             filename, w, h = entry
+            if filename in self.bad_smilies:
+                return m.group(1)
             size_attrs = f' width="{w}" height="{h}"' if w and h else ''
             return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="{html.escape(m.group(1))}" class="smilies"{size_attrs} />'
         text = re.sub(r'<E>([^<]*)</E>', replace_xml_smiley, text)
@@ -374,13 +381,15 @@ class PhpbbBBCodeParser:
             img_match = re.search(r'src="[^"]*?/([^/"]+)"', full)
             if img_match:
                 filename = img_match.group(1)
-                w, h = self.smiley_sizes_by_filename.get(filename, (0, 0))
-                size_attrs = f' width="{w}" height="{h}"' if w and h else ''
                 # phpBB's own comment format already carries the code as the
                 # img's alt (e.g. alt=":)"); reuse it instead of a generic
                 # label — falls back to "smiley" only if a dump lacks it.
                 alt_match = re.search(r'alt="([^"]*)"', full)
                 alt = html.escape(alt_match.group(1)) if alt_match else "smiley"
+                if filename in self.bad_smilies:
+                    return alt
+                w, h = self.smiley_sizes_by_filename.get(filename, (0, 0))
+                size_attrs = f' width="{w}" height="{h}"' if w and h else ''
                 return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="{alt}" class="smilies"{size_attrs} />'
             return full
 
