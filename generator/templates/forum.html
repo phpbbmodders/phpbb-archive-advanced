@@ -64,7 +64,7 @@
           &nbsp;·&nbsp; {{ topic.topic_time | timestamp }}
           {% if topic.topic_last_poster_name %}
           &nbsp;·&nbsp; Last:
-          {% if topic.topic_last_poster_id %}
+          {% if topic.topic_last_poster_id and topic.topic_last_poster_id > 1 %}
             <a href="{{ root }}users/{{ topic.topic_last_poster_id }}.html">{{ topic.topic_last_poster_name | e }}</a>
           {% else %}
             {{ topic.topic_last_poster_name | e }}

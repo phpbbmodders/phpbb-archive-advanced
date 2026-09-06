@@ -36,7 +36,7 @@
       {% if forum.forum_last_topic_id %}
         <a href="{{ root }}topics/{{ forum.forum_last_topic_id }}.html#p{{ forum.forum_last_post_id }}">{{ forum.forum_last_post_subject | e }}</a><br>
       {% endif %}
-      by {% if forum.forum_last_poster_id %}<a href="{{ root }}users/{{ forum.forum_last_poster_id }}.html">{{ forum.forum_last_poster_name | e }}</a>{% else %}{{ forum.forum_last_poster_name | e }}{% endif %}<br>
+      by {% if forum.forum_last_poster_id and forum.forum_last_poster_id > 1 %}<a href="{{ root }}users/{{ forum.forum_last_poster_id }}.html">{{ forum.forum_last_poster_name | e }}</a>{% else %}{{ forum.forum_last_poster_name | e }}{% endif %}<br>
       {{ forum.forum_last_post_time | timestamp }}
     {% endif %}
   </span>
