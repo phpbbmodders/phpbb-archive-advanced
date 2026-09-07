@@ -49,11 +49,24 @@ CREATE TABLE `phpbb_topics` (
   `topic_last_poster_name` varchar(255) NOT NULL DEFAULT '',
   `topic_status` tinyint(3) NOT NULL DEFAULT 0,
   `topic_visibility` tinyint(3) NOT NULL DEFAULT 1,
+  `poll_title` varchar(255) NOT NULL DEFAULT '',
   PRIMARY KEY (`topic_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
-INSERT INTO `phpbb_topics` VALUES (1,1,'Test Topic',2,1600000000,50,3,3,1700000000,'testuser',0,1);
-INSERT INTO `phpbb_topics` VALUES (2,1,'Hidden Topic',2,1600000000,0,0,0,1700000000,'testuser',0,3);
+INSERT INTO `phpbb_topics` VALUES (1,1,'Test Topic',2,1600000000,50,3,3,1700000000,'testuser',0,1,'');
+INSERT INTO `phpbb_topics` VALUES (2,1,'Hidden Topic',2,1600000000,0,0,0,1700000000,'testuser',0,3,'');
+INSERT INTO `phpbb_topics` VALUES (3,1,'Poll Topic',2,1600000000,0,1,0,1700000000,'testuser',0,1,'Pick one');
+
+CREATE TABLE `phpbb_poll_options` (
+  `poll_option_id` tinyint(4) NOT NULL DEFAULT 0,
+  `topic_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `poll_option_text` text NOT NULL,
+  `poll_option_total` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  PRIMARY KEY (`poll_option_id`, `topic_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+INSERT INTO `phpbb_poll_options` VALUES (1,3,'Option A',3);
+INSERT INTO `phpbb_poll_options` VALUES (2,3,'Option B',1);
 
 CREATE TABLE `phpbb_posts` (
   `post_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
@@ -171,7 +184,7 @@ class TestImportPreservesRowContent:
 def test_get_topics(db_path):
     db = PhpbbDatabase(db_path, table_prefix="phpbb_")
     topics = db.get_topics(forum_id=1)
-    assert len(topics) == 1
+    assert len(topics) == 2
     assert topics[0]["topic_title"] == "Test Topic"
 
 
@@ -209,6 +222,24 @@ def test_get_attachments_excludes_private_messages(db_path):
     attachments = db.get_attachments(post_id=1)
     assert len(attachments) == 1
     assert attachments[0]["real_filename"] == "photo.png"
+
+
+def test_get_all_poll_texts(db_path):
+    # poll_title/poll_option_text go through the same BBCode/XML parser
+    # as post text and can equally contain [img] — never included in
+    # image discovery before, silently dropping any poll image (see
+    # phpbb-archive security review, finding 10).
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    texts = db.get_all_poll_texts()
+    assert "Pick one" in texts
+    assert "Option A" in texts
+    assert "Option B" in texts
+
+
+def test_get_all_poll_texts_respects_exclusion(db_path):
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    texts = db.get_all_poll_texts(exclude_forum_ids={1})
+    assert texts == []
 
 
 def test_get_attachments_ordered_by_attach_id_desc(db_path):

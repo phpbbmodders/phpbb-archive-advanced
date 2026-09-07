@@ -788,22 +788,47 @@ def report_missing_avatars(users: list[dict], bad_avatars: set[str], remote_avat
 
 def find_image_urls(db: PhpbbDatabase, users: list[dict], forums: list[dict],
                      exclude_forum_ids: set[int] | None = None) -> set[str]:
-    """Collect every external image URL referenced via [img] BBCode or XML
-    <IMG src> markup across post bodies, signatures, and forum descriptions.
+    """Collect every external image URL referenced via [img] BBCode (with or
+    without a UID suffix) or XML <IMG src>/<URL url> markup across post
+    bodies, signatures, forum descriptions, and poll questions/options.
     Must be called with raw (not yet BBCode-converted) text. `forums` should
-    already be exclusion-filtered — only post text needs exclude_forum_ids
-    explicitly, since posts aren't otherwise filtered before reaching here."""
-    pattern_bbcode = re.compile(r'\[img\](https?://[^\]]*)\[/img\]', re.IGNORECASE)
+    already be exclusion-filtered — only post/poll text needs
+    exclude_forum_ids explicitly, since neither is otherwise filtered before
+    reaching here.
+
+    Mirrors the same shapes PhpbbBBCodeParser actually renders (see
+    bbcode.py's _convert_xml_markup/_convert_bbcode) so a shape the renderer
+    resolves is never silently dropped just because discovery never fetched
+    it — see phpbb-archive security review, finding 10. In particular a
+    board that migrated from phpBB2 can carry a literal, unconverted
+    [img]<URL url="X">...</URL>[/img] (see the "Malformed [img] tags" entry
+    in docs/CHANGES.md) — confirmed real and common on this dump (969 real
+    posts). html.unescape() matches a URL stored as XML text/attribute
+    content, which has "&" entity-escaped to "&amp;" per XML rules —
+    passing that straight to an HTTP request would break any query string
+    with more than one parameter."""
+    # A UID suffix (:abc123) only ever appears on the legacy bracket-BBCode
+    # path, but matching it regardless of dump format costs nothing.
+    pattern_bbcode = re.compile(r'\[img(?::\w+)?\](https?://[^\]]*)\[/img(?::\w+)?\]', re.IGNORECASE)
     pattern_xml = re.compile(r'<IMG\s+src="(https?://[^"]*)"', re.IGNORECASE)
+    # [img]<URL url="X">...</URL>[/img] — see bbcode.py's own comment on
+    # this same regex (case (a) in _convert_xml_markup) for the real-world
+    # shape this matches, including the tolerated short gaps on both sides.
+    pattern_img_url_migration = re.compile(
+        r'\[img\][^<]{0,20}<URL url="(https?://[^"]*)"[^>]*>.*?</URL>[^\[]*?\[/img\]',
+        re.IGNORECASE | re.DOTALL,
+    )
 
     texts = db.get_all_post_texts(exclude_forum_ids)
     texts.extend(u.get("user_sig", "") for u in users if u.get("user_sig"))
     texts.extend(f.get("forum_desc", "") for f in forums if f.get("forum_desc"))
+    texts.extend(db.get_all_poll_texts(exclude_forum_ids))
 
     urls: set[str] = set()
     for text in texts:
-        urls.update(m.strip() for m in pattern_bbcode.findall(text))
-        urls.update(pattern_xml.findall(text))
+        urls.update(html.unescape(m.strip()) for m in pattern_bbcode.findall(text))
+        urls.update(html.unescape(m) for m in pattern_xml.findall(text))
+        urls.update(html.unescape(m) for m in pattern_img_url_migration.findall(text))
     return urls
 
 

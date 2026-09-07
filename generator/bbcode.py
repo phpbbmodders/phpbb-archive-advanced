@@ -299,13 +299,17 @@ class PhpbbBBCodeParser:
         # text; resolved against the locally cached copy, same as [img]
         # BBCode above. A dead or undecodable URL is dropped.
         def replace_xml_img(match):
-            name = self.external_images.get(match.group(1).strip())
+            # html.unescape() matches find_image_urls()'s own discovery-time
+            # decoding (generate.py) — an XML attribute/text URL containing
+            # a real "&" is stored entity-escaped ("&amp;"), and the cache
+            # dict is keyed by the decoded form on both sides.
+            name = self.external_images.get(html.unescape(match.group(1).strip()))
             if not name:
                 return ''
             return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image" loading="lazy">'
 
         def replace_xml_img_url(url):
-            name = self.external_images.get(url.strip())
+            name = self.external_images.get(html.unescape(url.strip()))
             if not name:
                 return ''
             return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image" loading="lazy">'
@@ -557,9 +561,10 @@ class PhpbbBBCodeParser:
 
         # Image — resolved against the locally cached copy of the external
         # URL; a dead or undecodable URL (not in external_images) is dropped
-        # rather than left as a broken hotlink.
+        # rather than left as a broken hotlink. html.unescape() matches
+        # find_image_urls()'s own discovery-time decoding (generate.py).
         def replace_img(match):
-            name = self.external_images.get(match.group(1).strip())
+            name = self.external_images.get(html.unescape(match.group(1).strip()))
             if not name:
                 return ''
             return f'<img src="{self.assets_prefix}/external/{name}" class="postimage" alt="image" loading="lazy" />'

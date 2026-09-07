@@ -5,8 +5,77 @@ from generator.generate import (
     _apache_redirects,
     _nginx_redirects,
     clean_disabled_feature_output,
+    find_image_urls,
     render_redirects,
 )
+
+
+class _FakeDB:
+    """Stands in for PhpbbDatabase for find_image_urls(), which only
+    calls get_all_post_texts()/get_all_poll_texts()."""
+
+    def __init__(self, post_texts=(), poll_texts=()):
+        self._post_texts = list(post_texts)
+        self._poll_texts = list(poll_texts)
+
+    def get_all_post_texts(self, exclude_forum_ids=None):
+        return list(self._post_texts)
+
+    def get_all_poll_texts(self, exclude_forum_ids=None):
+        return list(self._poll_texts)
+
+
+class TestFindImageUrls:
+    # find_image_urls() must discover every shape PhpbbBBCodeParser
+    # actually renders — a shape the renderer resolves but discovery
+    # never fetches gets silently dropped (empty external_images entry)
+    # instead of shown. See phpbb-archive security review, finding 10;
+    # each case below was confirmed against phpbbmodders.net's real dump
+    # before fixing (counts noted in docs/CHANGES.md).
+
+    def test_finds_bare_img_bbcode(self):
+        db = _FakeDB(post_texts=["[img]http://example.com/pic.png[/img]"])
+        assert find_image_urls(db, [], []) == {"http://example.com/pic.png"}
+
+    def test_finds_img_with_uid_suffix(self):
+        # [img:uid]...[/img:uid] — the plain "[img]" pattern requires an
+        # exact "[/img]" close with no suffix, so a real UID-tagged post
+        # produced an empty discovery set before this fix.
+        db = _FakeDB(post_texts=["[img:abc123]http://example.com/pic.png[/img:abc123]"])
+        assert find_image_urls(db, [], []) == {"http://example.com/pic.png"}
+
+    def test_finds_xml_img_src(self):
+        db = _FakeDB(post_texts=['<t><IMG src="http://example.com/pic.png">text</IMG></t>'])
+        assert find_image_urls(db, [], []) == {"http://example.com/pic.png"}
+
+    def test_finds_img_url_migration_shape(self):
+        # A board that migrated from phpBB2 can carry a literal,
+        # unconverted [img] wrapping an already-XML-converted <URL>
+        # link — confirmed real and common (969 real posts) on
+        # phpbbmodders.net's own dump; sample real text:
+        # [img]<URL url="http://phpbbmodders.net/images/stuff/
+        # announce_logo.gif">http://.../announce_logo.gif</URL>[/img]
+        text = ('<t>before [img]<URL url="http://example.com/userbar.gif">'
+                'http://example.com/userbar.gif</URL>[/img] after</t>')
+        db = _FakeDB(post_texts=[text])
+        assert find_image_urls(db, [], []) == {"http://example.com/userbar.gif"}
+
+    def test_decodes_html_entities_in_migration_shape_url(self):
+        # A URL stored as an XML attribute has its "&" escaped to
+        # "&amp;" per XML rules — confirmed real (13 of the 969 real
+        # migration-shape posts above) on phpbbmodders.net's own dump.
+        # Passing the literal "&amp;" straight to an HTTP request breaks
+        # any query string with more than one parameter.
+        text = '<t>[img]<URL url="http://example.com/file.php?id=1&amp;x=2">t</URL>[/img]</t>'
+        db = _FakeDB(post_texts=[text])
+        assert find_image_urls(db, [], []) == {"http://example.com/file.php?id=1&x=2"}
+
+    def test_finds_poll_images(self):
+        # poll_title/poll_option_text render through the same parser as
+        # post text and can equally contain [img] — never included in
+        # discovery before this fix.
+        db = _FakeDB(poll_texts=["<t>[img]http://example.com/poll.png[/img]</t>"])
+        assert find_image_urls(db, [], []) == {"http://example.com/poll.png"}
 
 
 class TestRedirectGeneration:

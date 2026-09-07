@@ -361,6 +361,30 @@ class PhpbbDatabase:
             rows = self._query(f'SELECT post_text FROM "{self._table("posts")}"')
         return [r["post_text"] for r in rows if r["post_text"]]
 
+    def get_all_poll_texts(self, exclude_forum_ids: set[int] | None = None) -> list[str]:
+        """poll_title (phpbb_topics) and poll_option_text (phpbb_poll_options,
+        joined to phpbb_topics for its forum_id) — both go through the same
+        BBCode/XML parser as post text, and can equally contain [img]."""
+        if exclude_forum_ids:
+            placeholders = ",".join("?" * len(exclude_forum_ids))
+            title_rows = self._query(
+                f'SELECT poll_title FROM "{self._table("topics")}" '
+                f"WHERE forum_id NOT IN ({placeholders})",
+                tuple(exclude_forum_ids),
+            )
+            option_rows = self._query(
+                f'SELECT po.poll_option_text FROM "{self._table("poll_options")}" po '
+                f'JOIN "{self._table("topics")}" t ON t.topic_id = po.topic_id '
+                f"WHERE t.forum_id NOT IN ({placeholders})",
+                tuple(exclude_forum_ids),
+            )
+        else:
+            title_rows = self._query(f'SELECT poll_title FROM "{self._table("topics")}"')
+            option_rows = self._query(f'SELECT poll_option_text FROM "{self._table("poll_options")}"')
+        texts = [r["poll_title"] for r in title_rows if r["poll_title"]]
+        texts.extend(r["poll_option_text"] for r in option_rows if r["poll_option_text"])
+        return texts
+
     def get_smilies(self) -> list[dict]:
         return self._query(f'SELECT * FROM "{self._table("smilies")}"')
 
