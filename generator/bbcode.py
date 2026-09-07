@@ -280,6 +280,18 @@ class PhpbbBBCodeParser:
         # path. Without this it was rendered as literal, un-boxed
         # "[code]...[/code]" text sitting in the middle of the post.
         text, code_blocks = self._stash_code_blocks(text)
+        # Stashed content is a raw substring of the XML document, where a
+        # real "&"/"<"/">" the user actually typed is stored entity-
+        # escaped per XML rules (e.g. "&lt;div&gt;" for a literal "<div>"
+        # typed as a code example) — html.unescape() it back to real
+        # characters now, so _restore_code_blocks()'s own html.escape()
+        # re-escapes it exactly once. Without this, a real "<div>" typed
+        # inside [code] round-tripped as literal visible "&lt;div&gt;"
+        # text on the page instead of "<div>". A no-op for the one
+        # deliberately pre-normalized exception, the literal "<br>" line-
+        # break marker (see _restore_code_blocks) — html.unescape() only
+        # touches recognized entity sequences, not bare "<"/">".
+        code_blocks = [html.unescape(c) for c in code_blocks]
 
         # Semantic block elements → HTML
         text = re.sub(r'<B>', '<strong>', text)
@@ -347,7 +359,17 @@ class PhpbbBBCodeParser:
         #     as the sole span between the brackets.
         text = re.sub(r'\[img\](https?://[^\s\[\]<>]+)\[/img\]', lambda m: replace_xml_img_url(m.group(1)), text)
 
-        text = re.sub(r'<URL url="([^"]*)"[^>]*>', lambda m: f'<a href="{html.escape(self._rewrite_internal_link(m.group(1)), quote=True)}" class="postlink">', text)
+        # The url="..." attribute value comes straight from the raw XML
+        # document, where a real "&" is stored entity-escaped as "&amp;"
+        # per XML rules — html.unescape() it back to real characters
+        # before any further processing (topic-id extraction, sid
+        # stripping, host matching), or a multi-parameter link's own "&"
+        # separators get treated as literal text instead of real ones,
+        # and the final html.escape() below would escape the already-
+        # escaped text a second time (confirmed: a real "?a=1&amp;b=2"
+        # rendered as "?a=1&amp;amp;b=2" — a browser reads that back as
+        # literal text "&amp;" glued onto "b=2", not a second parameter).
+        text = re.sub(r'<URL url="([^"]*)"[^>]*>', lambda m: f'<a href="{html.escape(self._rewrite_internal_link(html.unescape(m.group(1))), quote=True)}" class="postlink">', text)
         text = re.sub(r'</URL>', '</a>', text)
         text = re.sub(r'<IMG\s+src="([^"]*)"[^>]*>.*?</IMG>', replace_xml_img, text, flags=re.DOTALL)
         # Also handle self-closing form

@@ -153,6 +153,17 @@ class TestXmlCodeBlocks:
         assert "&lt;div" in result
         assert '<div class="x">' not in result
 
+    def test_entity_escaped_code_content_not_double_escaped(self, parser):
+        # A [code] block's content is a raw substring of the XML document,
+        # where a real "<div>" the user actually typed as a code example
+        # is stored entity-escaped ("&lt;div&gt;") per XML rules — html-
+        # escaping that raw, already-escaped substring a second time at
+        # restore time turned it into visible "&amp;lt;div&amp;gt;" text
+        # instead of the intended visible "<div>".
+        result = parser.convert("<t>[code]&lt;div&gt;[/code]</t>", uid="")
+        assert "&lt;div&gt;" in result
+        assert "&amp;lt;" not in result
+
 
 class TestHorizontalRule:
     def test_hr_bbcode(self, parser):
@@ -255,3 +266,18 @@ class TestInternalLinkRewriting:
         result = parser.convert(
             "[url=https://ourboard.example/viewtopic.php?t=999]click[/url]", uid="")
         assert 'href="../topics/999.html"' not in result
+
+
+class TestXmlUrlEntityDecoding:
+    # <URL url="..."> is a raw XML attribute value, where a real "&" is
+    # stored entity-escaped as "&amp;" per XML rules. The final href is
+    # already run through html.escape() for safe embedding — escaping an
+    # already-escaped "&amp;" a second time produces "&amp;amp;" in the
+    # HTML source, which a browser reads back as literal text "&amp;"
+    # glued onto the next parameter, not a real query-string separator.
+
+    def test_multi_param_external_link_not_double_escaped(self, parser):
+        result = parser.convert(
+            '<t><URL url="http://example.com/x?a=1&amp;b=2">link</URL></t>', uid="")
+        assert 'href="http://example.com/x?a=1&amp;b=2"' in result
+        assert "&amp;amp;" not in result
