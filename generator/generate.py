@@ -348,6 +348,18 @@ def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: s
                 if excluded_physical_filenames and name in excluded_physical_filenames:
                     continue
                 real = (physical_to_real or {}).get(name)
+                if real:
+                    # real_filename comes straight from the dump's own
+                    # database — an attacker-crafted or corrupted dump
+                    # could put path separators (e.g. "../../etc/x") in
+                    # it, which a bare Path join would honor literally at
+                    # copy time, writing outside assets/attachments/
+                    # entirely. Reduce to a bare basename; a filename that
+                    # collapses to nothing (".", "..", or empty) falls
+                    # back to the flat physical-name layout below.
+                    real = os.path.basename(real)
+                    if real in ("", ".", ".."):
+                        real = None
                 target = dest / name / real if real else dest / name
                 if target.exists():
                     continue
@@ -577,7 +589,16 @@ def _fetch_image(url: str, timeout: int = 10, url_mirrors: dict[str, Path] | Non
     for prefix, local_dir in (url_mirrors or {}).items():
         if not url.startswith(prefix):
             continue
-        local_path = local_dir / url[len(prefix):]
+        # The URL suffix comes from a post's own [img]/<IMG> content — a
+        # crafted "../../etc/x" suffix would otherwise resolve outside
+        # local_dir entirely and read whatever's there instead. Resolve
+        # both sides and require containment before touching the
+        # filesystem.
+        local_path = (local_dir / url[len(prefix):]).resolve()
+        resolved_dir = local_dir.resolve()
+        if not (local_path == resolved_dir or resolved_dir in local_path.parents):
+            logger.warning("Mirror path for %s escapes %s, skipping: %s", url, local_dir, local_path)
+            continue
         if not local_path.exists():
             continue
         try:
