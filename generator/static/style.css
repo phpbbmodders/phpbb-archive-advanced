@@ -154,6 +154,17 @@ table.topic-table td.lastpost { font-size: 0.85em; color: #555; }
   color: #666;
 }
 
+/* Post edit notice ("Last edited by...") */
+.notice {
+  background: #EAF0F8;
+  border: 1px solid #B3C0D8;
+  padding: 6px 10px;
+  margin-top: 10px;
+  font-size: 0.85em;
+  color: #666;
+}
+.notice strong { color: #536482; }
+
 /* ── profile table ── */
 table.tablebg { border-collapse: collapse; background: #fff; border: 1px solid #B3C0D8; }
 table.tablebg th { background: #D1D7E3; color: #536482; padding: 6px 10px; text-align: left; border-bottom: 1px solid #B3C0D8; }

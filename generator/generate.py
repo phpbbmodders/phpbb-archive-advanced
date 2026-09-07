@@ -755,12 +755,18 @@ def _fetch_image(url: str, timeout: int = 10, url_mirrors: dict[str, Path] | Non
 
 
 def download_remote_avatars(users: list[dict], out: Path, url_mirrors: dict[str, Path] | None = None,
-                             ignored_hosts: set[str] | None = None) -> dict[int, str]:
+                             ignored_hosts: set[str] | None = None,
+                             skip_fetch: bool = False) -> dict[int, str]:
     """Download avatar.driver.remote avatars into assets/avatars/{userid}.{ext}
     so the archive stays self-contained instead of hotlinking the original
     site. Returns {user_id: ext} for avatars that downloaded and decoded
     successfully; a dead URL or undecodable response is skipped (treated the
-    same as having no avatar) rather than left as a broken external link."""
+    same as having no avatar) rather than left as a broken external link.
+
+    skip_fetch (see --regen-light) skips the network entirely for anything
+    not already cached, instead of attempting and retrying failures — for a
+    fast re-render of HTML/template changes where the exact set of resolved
+    avatars doesn't matter for that run."""
     remote_users = [
         u for u in users
         if u.get("user_avatar_type") == "avatar.driver.remote" and u.get("user_avatar", "").startswith(("http://", "https://"))
@@ -779,6 +785,8 @@ def download_remote_avatars(users: list[dict], out: Path, url_mirrors: dict[str,
             # --incremental, which preserves assets/ across runs).
             cached[user["user_id"]] = existing.suffix.lstrip(".")
             skipped += 1
+            continue
+        if skip_fetch:
             continue
         result = _fetch_image(user["user_avatar"], url_mirrors=url_mirrors, ignored_hosts=ignored_hosts)
         if result is None:
@@ -910,11 +918,17 @@ def find_image_urls(db: PhpbbDatabase, users: list[dict], forums: list[dict],
 
 
 def download_external_images(urls: set[str], out: Path, url_mirrors: dict[str, Path] | None = None,
-                              ignored_hosts: set[str] | None = None) -> dict[str, str]:
+                              ignored_hosts: set[str] | None = None,
+                              skip_fetch: bool = False) -> dict[str, str]:
     """Download external [img]/<IMG> URLs into assets/external/{hash}.{ext}
     so the archive stays self-contained. Returns {url: filename} for URLs
     that downloaded and decoded successfully; a dead or undecodable URL is
-    skipped and its [img] tag is dropped entirely rather than left broken."""
+    skipped and its [img] tag is dropped entirely rather than left broken.
+
+    skip_fetch (see --regen-light) skips the network entirely for anything
+    not already cached, instead of attempting and retrying failures — for a
+    fast re-render of HTML/template changes where the exact set of resolved
+    images doesn't matter for that run."""
     import hashlib
 
     cached: dict[str, str] = {}
@@ -932,6 +946,8 @@ def download_external_images(urls: set[str], out: Path, url_mirrors: dict[str, P
             # --incremental, which preserves assets/ across runs).
             cached[url] = existing.name
             skipped += 1
+            continue
+        if skip_fetch:
             continue
         result = _fetch_image(url, url_mirrors=url_mirrors, ignored_hosts=ignored_hosts)
         if result is None:
@@ -1050,6 +1066,36 @@ def get_user_rank(user: dict, ranks: list[dict]) -> dict | None:
             if best is None or r["rank_min"] > best["rank_min"]:
                 best = r
     return best
+
+
+def build_edit_notice(post: dict, poster_id: int, author_username: str | None,
+                       users: dict[int, dict], display_last_edited: bool) -> dict | None:
+    """A post's edit notice ("Last edited by X on <date>, edited N times in
+    total.", plus an optional reason), or None if nothing should show.
+    Mirrors phpBB 3.3.x core's own gate in viewtopic.php exactly: shown when
+    the post has been edited AND the board has display_last_edited on, OR
+    whenever an edit reason was given — a reason forces the notice to show
+    regardless of that board setting. Editor name resolution also mirrors
+    core: the post's own author unless a *different* user (e.g. a moderator)
+    made the edit."""
+    edit_count = post.get("post_edit_count", 0) or 0
+    edit_reason = post.get("post_edit_reason") or ""
+    if not (edit_count and display_last_edited) and not edit_reason:
+        return None
+
+    edit_user = post.get("post_edit_user", 0) or 0
+    if not edit_user or edit_user == poster_id:
+        editor_name = author_username or post.get("post_username") or "Unknown"
+    else:
+        editor = users.get(edit_user)
+        editor_name = editor["username"] if editor else "Unknown"
+
+    return {
+        "editor_name": editor_name,
+        "edit_time": post.get("post_edit_time", 0),
+        "edit_count": edit_count,
+        "reason": edit_reason or None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1205,7 +1251,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   internal_topic_ids: set[int], bad_smilies: set[str],
                   board_hosts: set[str],
                   site_name: str = "", announcement_html: str | None = None,
-                  site_url: str | None = None) -> int:
+                  site_url: str | None = None, display_last_edited: bool = True) -> int:
     """Render all topic pages. Returns total post count."""
     topics_dir = out / "topics"
     topics_dir.mkdir(exist_ok=True)
@@ -1276,6 +1322,10 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                 **post,
                 "rendered_html": rendered,
                 "author": author_ctx,
+                "edit_notice": build_edit_notice(
+                    post, poster_id, author["username"] if author else None,
+                    users, display_last_edited,
+                ),
             })
 
         poll = None
@@ -1680,9 +1730,19 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
              logo_natural_size: bool = False, theme: str = "light",
              board_hosts_path: str | None = None,
              redirect_format: str | None = None,
-             redirect_old_prefix: str | None = None) -> None:
+             redirect_old_prefix: str | None = None,
+             regen_light: bool = False) -> None:
     out = Path(output_dir)
     dump = Path(dump_dir)
+
+    if regen_light and not incremental:
+        # --regen-light only makes sense against an existing output/ whose
+        # assets/ (attachments, avatars, external images) survives the run
+        # — without --incremental, the block below wipes output/ entirely
+        # first, which would turn "skip fetching what's already cached"
+        # into "skip fetching, and there's nothing cached anymore".
+        logger.info("--regen-light implies --incremental")
+        incremental = True
 
     # Validate before doing anything destructive below: a missing dump
     # would otherwise only surface after --output has already been wiped,
@@ -1756,7 +1816,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
 
     # --- Avatars missing or corrupted in the source dump ---
     bad_avatars = find_bad_avatars(list(users.values()), out)
-    remote_avatar_exts = download_remote_avatars(list(users.values()), out, url_mirrors, ignored_hosts)
+    remote_avatar_exts = download_remote_avatars(list(users.values()), out, url_mirrors, ignored_hosts, skip_fetch=regen_light)
     avatar_overrides = {}
     if avatar_overrides_path:
         avatar_overrides = apply_avatar_overrides(avatar_overrides_entries, out)
@@ -1765,7 +1825,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     # forums is already exclusion-filtered, so forum_desc scanning skips
     # excluded forums naturally; post text is filtered explicitly.
     image_urls = find_image_urls(db, list(users.values()), forums, excluded_forum_ids)
-    external_images = download_external_images(image_urls, out, url_mirrors, ignored_hosts)
+    external_images = download_external_images(image_urls, out, url_mirrors, ignored_hosts, skip_fetch=regen_light)
 
     # --- Templates ---
     template_dir = Path(__file__).parent / "templates"
@@ -1774,6 +1834,11 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     env.globals["profile_position"] = profile_position
     env.globals["site_desc"] = db.get_config("site_desc") or None
     env.globals["board_index_text"] = db.get_config("board_index_text") or "Board index"
+    # phpBB's own admin setting for whether an edited post's "Last edited
+    # by..." notice shows at all — an edit reason forces it to show
+    # regardless (see build_edit_notice()). Defaults on, matching a real
+    # phpBB install's own default, when a dump doesn't have the key set.
+    display_last_edited = db.get_config("display_last_edited") != "0"
     downloaded_favicon_ext = _download_image_asset(favicon_url, out, "favicon", "Favicon", default_ext="ico") if favicon_url else None
     env.globals["favicon_ext"] = downloaded_favicon_ext or (Path(favicon_path).suffix.lstrip(".") if favicon_path else None)
     downloaded_logo_ext = _download_image_asset(logo_url, out / "assets", "logo", "Logo") if logo_url else None
@@ -1881,7 +1946,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
 
     site_url = sitemap_url if not sitemap_url or sitemap_url.endswith("/") else sitemap_url + "/"
 
-    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name, announcement_html=announcement_html_nested, site_url=site_url)
+    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name, announcement_html=announcement_html_nested, site_url=site_url, display_last_edited=display_last_edited)
     render_forums(env, out, db, users, shared_parser_nested, forums, site_name=site_name, announcement_html=announcement_html_nested, exclude_forum_ids=excluded_forum_ids)
     render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name)
     render_index(env, out, forum_tree or [], total_posts, len(internal_topic_ids), len(users), site_name=site_name, announcement_html=announcement_html)
@@ -2114,6 +2179,13 @@ def main() -> None:
                          help="Keep previously-downloaded attachments/avatars/external images "
                               "instead of re-fetching everything — only failed URLs are retried. "
                               "Generated pages are still rebuilt fresh every run. Off by default.")
+    parser.add_argument("--regen-light", action="store_true",
+                         help="Skip the network entirely for remote avatars/external images not "
+                              "already cached in an existing output/ (instead of attempting and "
+                              "retrying failures like --incremental does) — implies --incremental. "
+                              "For quickly re-rendering HTML/template changes against output/ you've "
+                              "already run a full generate on; the exact set of resolved images "
+                              "doesn't change for that run. Off by default.")
     parser.add_argument("--ignore-hosts", metavar="FILE",
                          help='JSON array of hostnames (e.g. ["tinypic.com"]) to skip entirely '
                               "without a network attempt — matches subdomains too. Useful for "
@@ -2235,7 +2307,7 @@ def main() -> None:
                  args.announcement, args.sitemap_url, args.search, args.profile_position,
                  args.favicon, args.favicon_url, args.logo, args.logo_url,
                  args.logo_natural_size, args.theme, args.board_hosts, args.redirect_format,
-                 args.redirect_old_prefix)
+                 args.redirect_old_prefix, args.regen_light)
 
 
 if __name__ == "__main__":

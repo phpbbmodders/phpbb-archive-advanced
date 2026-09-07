@@ -35,7 +35,7 @@ Then run the generator:
 
 That's it. Open `output/index.html` in a browser to browse the archive. `generate.sh` wraps the same command and sets up `.venv` for you if it doesn't exist yet.
 
-Attachments (images, zip, rar), avatars, and `[img]`-tagged images that are missing or fail to decode/validate are dropped from the archive rather than left as broken links. Attachments are served under their real original filename (not the on-disk physical hash), so "Save Image/Link As" gives back the actual filename. Attachments/avatars/external images that only exist as external URLs (remote avatars, hotlinked signature images) are downloaded once and cached locally so the archive stays self-contained — a URL that's genuinely dead just gets skipped, and is retried again on every future run (see `--incremental` below if that's not what you want). Every post/attachment/avatar image is marked `loading="lazy"`, so a long thread with dozens of embedded images doesn't force the browser to fetch all of them up front.
+Attachments (images, zip, rar), avatars, and `[img]`-tagged images that are missing or fail to decode/validate are dropped from the archive rather than left as broken links. Attachments are served under their real original filename (not the on-disk physical hash), so "Save Image/Link As" gives back the actual filename. Attachments/avatars/external images that only exist as external URLs (remote avatars, hotlinked signature images) are downloaded once and cached locally so the archive stays self-contained — a URL that's genuinely dead just gets skipped, and is retried again on every future run (see `--incremental` below if that's not what you want, or `--regen-light` to skip the network for uncached images entirely when you're only iterating on a template/logic change against an `output/` you've already fully generated once). Every post/attachment/avatar image is marked `loading="lazy"`, so a long thread with dozens of embedded images doesn't force the browser to fetch all of them up front.
 
 ## Usage
 
@@ -47,7 +47,7 @@ Attachments (images, zip, rar), avatars, and `[img]`-tagged images that are miss
 usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--avatar-overrides FILE] [-m] [--exclude FILE] [-l]
                    [--password-override FILE] [--url-mirrors FILE] [-i] [-c]
-                   [--incremental] [--ignore-hosts FILE]
+                   [--incremental] [--regen-light] [--ignore-hosts FILE]
                    [--attachment-recovery DIR] [--style-css FILE]
                    [--announcement FILE] [--sitemap-url URL] [--search]
                    [--profile-position {left,right}]
@@ -114,6 +114,14 @@ options:
                         fetching everything — only failed URLs are retried.
                         Generated pages are still rebuilt fresh every run. Off
                         by default.
+  --regen-light         Skip the network entirely for remote avatars/external
+                        images not already cached in an existing output/
+                        (instead of attempting and retrying failures like
+                        --incremental does) — implies --incremental. For
+                        quickly re-rendering HTML/template changes against
+                        output/ you've already run a full generate on; the
+                        exact set of resolved images doesn't change for that
+                        run. Off by default.
   --ignore-hosts FILE   JSON array of hostnames (e.g. ["tinypic.com"]) to skip
                         entirely without a network attempt — matches
                         subdomains too. Useful for hosts you already know are

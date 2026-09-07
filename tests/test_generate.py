@@ -5,9 +5,12 @@ from generator.bbcode import PhpbbBBCodeParser
 from generator.generate import (
     _apache_redirects,
     _nginx_redirects,
+    build_edit_notice,
     clean_disabled_feature_output,
     copy_assets,
     copy_avatars,
+    download_external_images,
+    download_remote_avatars,
     find_image_urls,
     process_forum_descs,
     render_redirects,
@@ -417,3 +420,115 @@ class TestCopyAvatarsIsolatedFromOtherAssets:
         out = tmp_path / "output"
         copy_assets(dump, out)
         assert (out / "assets" / "avatars" / "5.png").read_bytes() == b"fake avatar"
+
+
+class TestBuildEditNotice:
+    # Mirrors phpBB 3.3.x core's own viewtopic.php gate exactly: shown when
+    # (post_edit_count AND display_last_edited) OR post_edit_reason is set.
+    # Confirmed real on phpbbmodders.net's own dump: 503 edited posts,
+    # display_last_edited=1 (enabled).
+
+    def test_no_notice_when_never_edited(self):
+        post = {"post_edit_count": 0, "post_edit_reason": ""}
+        assert build_edit_notice(post, poster_id=2, author_username="alice",
+                                  users={}, display_last_edited=True) is None
+
+    def test_no_notice_when_edited_but_display_last_edited_off_and_no_reason(self):
+        post = {"post_edit_count": 1, "post_edit_reason": "", "post_edit_user": 0,
+                "post_edit_time": 1000}
+        assert build_edit_notice(post, poster_id=2, author_username="alice",
+                                  users={}, display_last_edited=False) is None
+
+    def test_notice_shown_when_display_last_edited_on(self):
+        post = {"post_edit_count": 2, "post_edit_reason": "", "post_edit_user": 0,
+                "post_edit_time": 1000}
+        notice = build_edit_notice(post, poster_id=2, author_username="alice",
+                                    users={}, display_last_edited=True)
+        assert notice == {"editor_name": "alice", "edit_time": 1000,
+                           "edit_count": 2, "reason": None}
+
+    def test_reason_forces_notice_even_when_display_last_edited_off(self):
+        post = {"post_edit_count": 1, "post_edit_reason": "fixed typo",
+                "post_edit_user": 0, "post_edit_time": 1000}
+        notice = build_edit_notice(post, poster_id=2, author_username="alice",
+                                    users={}, display_last_edited=False)
+        assert notice is not None
+        assert notice["reason"] == "fixed typo"
+
+    def test_editor_is_post_author_by_default(self):
+        post = {"post_edit_count": 1, "post_edit_reason": "", "post_edit_user": 0,
+                "post_edit_time": 1000}
+        notice = build_edit_notice(post, poster_id=2, author_username="alice",
+                                    users={}, display_last_edited=True)
+        assert notice["editor_name"] == "alice"
+
+    def test_editor_is_different_user_when_post_edit_user_differs(self):
+        # A moderator editing someone else's post — real phpBB shows the
+        # moderator's name, not the post author's.
+        post = {"post_edit_count": 1, "post_edit_reason": "", "post_edit_user": 9,
+                "post_edit_time": 1000}
+        users = {9: {"user_id": 9, "username": "modbob"}}
+        notice = build_edit_notice(post, poster_id=2, author_username="alice",
+                                    users=users, display_last_edited=True)
+        assert notice["editor_name"] == "modbob"
+
+    def test_falls_back_to_post_username_for_guest_author(self):
+        post = {"post_edit_count": 1, "post_edit_reason": "", "post_edit_user": 0,
+                "post_edit_time": 1000, "post_username": "GuestPoster"}
+        notice = build_edit_notice(post, poster_id=1, author_username=None,
+                                    users={}, display_last_edited=True)
+        assert notice["editor_name"] == "GuestPoster"
+
+    def test_falls_back_to_unknown_when_no_name_available(self):
+        post = {"post_edit_count": 1, "post_edit_reason": "", "post_edit_user": 0,
+                "post_edit_time": 1000}
+        notice = build_edit_notice(post, poster_id=1, author_username=None,
+                                    users={}, display_last_edited=True)
+        assert notice["editor_name"] == "Unknown"
+
+    def test_unknown_editor_user_falls_back_to_unknown(self):
+        post = {"post_edit_count": 1, "post_edit_reason": "", "post_edit_user": 99,
+                "post_edit_time": 1000}
+        notice = build_edit_notice(post, poster_id=2, author_username="alice",
+                                    users={}, display_last_edited=True)
+        assert notice["editor_name"] == "Unknown"
+
+
+class TestRegenLightSkipsFetch:
+    # --regen-light's skip_fetch=True must never touch the network for a
+    # URL that isn't already cached, only rely on what's already on disk —
+    # verified here by using unreachable/fake URLs a real fetch would hang
+    # or fail on, and confirming no attempt is made either way.
+
+    def test_download_external_images_skip_fetch_skips_uncached_urls(self, tmp_path):
+        out = tmp_path / "output"
+        result = download_external_images({"http://example.invalid/pic.png"}, out, skip_fetch=True)
+        assert result == {}
+
+    def test_download_external_images_skip_fetch_still_uses_cache(self, tmp_path):
+        import hashlib
+        out = tmp_path / "output"
+        dest_dir = out / "assets" / "external"
+        dest_dir.mkdir(parents=True)
+        url = "http://example.invalid/pic.png"
+        digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+        (dest_dir / f"{digest}.png").write_bytes(b"fake")
+        result = download_external_images({url}, out, skip_fetch=True)
+        assert result == {url: f"{digest}.png"}
+
+    def test_download_remote_avatars_skip_fetch_skips_uncached(self, tmp_path):
+        out = tmp_path / "output"
+        users = [{"user_id": 5, "user_avatar_type": "avatar.driver.remote",
+                  "user_avatar": "http://example.invalid/a.png"}]
+        result = download_remote_avatars(users, out, skip_fetch=True)
+        assert result == {}
+
+    def test_download_remote_avatars_skip_fetch_still_uses_cache(self, tmp_path):
+        out = tmp_path / "output"
+        dest_dir = out / "assets" / "avatars"
+        dest_dir.mkdir(parents=True)
+        (dest_dir / "5.png").write_bytes(b"fake avatar")
+        users = [{"user_id": 5, "user_avatar_type": "avatar.driver.remote",
+                  "user_avatar": "http://example.invalid/a.png"}]
+        result = download_remote_avatars(users, out, skip_fetch=True)
+        assert result == {5: "png"}

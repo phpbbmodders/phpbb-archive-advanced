@@ -77,6 +77,12 @@
   <div class="postbody" style="flex:1">
     <div class="post-date"><a href="#p{{ post.post_id }}" class="post-permalink">Posted: {{ post.post_time | timestamp }}</a></div>
     <div class="content">{{ post.rendered_html | safe }}</div>
+    {% if post.edit_notice %}
+    <div class="notice">
+      Last edited by {{ post.edit_notice.editor_name | e }} on {{ post.edit_notice.edit_time | timestamp }}, edited {{ post.edit_notice.edit_count }} time{{ '' if post.edit_notice.edit_count == 1 else 's' }} in total.
+      {% if post.edit_notice.reason %}<br><strong>Reason:</strong> <em>{{ post.edit_notice.reason | e }}</em>{% endif %}
+    </div>
+    {% endif %}
     {% if author and author.sig_html %}
     <div class="sig">{{ author.sig_html | safe }}</div>
     {% endif %}
