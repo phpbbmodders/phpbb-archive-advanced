@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import jinja2
@@ -1244,10 +1245,17 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
                               style_css_path: str | None = None,
                               favicon_path: str | None = None,
                               logo_path: str | None = None,
-                              theme: str = "light") -> tuple[PhpbbDatabase, Path, Path, str, set[int]]:
+                              theme: str = "light") -> tuple[PhpbbDatabase, Path, Path, str, set[int], str]:
     """Shared setup for generate() and find_missing_avatars(): import the
     dump into SQLite and copy assets/. Returns (db, dump, out, site_name,
-    excluded_forum_ids)."""
+    excluded_forum_ids, db_path).
+
+    db_path is a system-temp file, not anything under out/ — the imported
+    database holds the *entire* dump verbatim (private messages, password
+    hashes, email addresses, excluded/hidden content, everything), so it
+    must never sit inside a directory a caller might publish. The caller
+    is responsible for deleting it (see cleanup at the end of generate()
+    and every diagnostic mode below)."""
     dump = Path(dump_dir)
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -1261,8 +1269,9 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
     sql_file = sql_files[0]
     logger.info("Using SQL dump: %s", sql_file)
 
-    db_path = str(out / ".phpbb_archive.db")
-    logger.info("Importing MySQL dump → SQLite ...")
+    db_fd, db_path = tempfile.mkstemp(suffix=".phpbb_archive.db")
+    os.close(db_fd)
+    logger.info("Importing MySQL dump → SQLite (working copy, outside output/) ...")
     import_mysql_dump(str(sql_file), db_path)
     db = PhpbbDatabase(db_path, table_prefix=table_prefix)
 
@@ -1285,7 +1294,7 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
     logger.info("Copying assets ...")
     copy_assets(dump, out, excluded_physical_filenames, style_css_path, physical_to_real, favicon_path, logo_path, theme)
 
-    return db, dump, out, site_name, excluded_forum_ids
+    return db, dump, out, site_name, excluded_forum_ids, db_path
 
 
 def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None = None,
@@ -1320,7 +1329,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
             logger.info("Clearing previous output: %s", out)
             shutil.rmtree(out)
 
-    db, dump, out, site_name, excluded_forum_ids = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path, favicon_path, logo_path, theme)
+    db, dump, out, site_name, excluded_forum_ids, db_path = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path, favicon_path, logo_path, theme)
 
     # --- Image/zip/rar attachments missing or corrupted in the source dump ---
     bad_attachments_map = find_bad_attachments(db, out)
@@ -1450,6 +1459,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
         render_search(env, out, site_name=site_name)
 
     db.close()
+    os.remove(db_path)
 
     if search:
         run_pagefind(out)
@@ -1462,7 +1472,7 @@ def find_missing_avatars(dump_dir: str, output_dir: str, avatar_overrides_path: 
     generate() does (local files, remote fetches, any existing overrides),
     then list every user whose avatar still doesn't resolve and write a
     starter --avatar-overrides template for them. Does not render the site."""
-    db, dump, out, _site_name, _excluded = _open_db_and_copy_assets(dump_dir, output_dir)
+    db, dump, out, _site_name, _excluded, db_path = _open_db_and_copy_assets(dump_dir, output_dir)
 
     users = db.get_all_users()
     bad_avatars = find_bad_avatars(users, out)
@@ -1475,13 +1485,14 @@ def find_missing_avatars(dump_dir: str, output_dir: str, avatar_overrides_path: 
     report_missing_avatars(users, bad_avatars, remote_avatar_exts, avatar_overrides, template_path)
 
     db.close()
+    os.remove(db_path)
 
 
 def list_forums(dump_dir: str, output_dir: str) -> None:
     """Diagnostic mode (-l/--list-forums): print every forum/category with
     its forum_id, indented to show nesting, so you know which id(s) to put
     in an --exclude JSON file. Does not render the site."""
-    db, dump, out, _site_name, _excluded = _open_db_and_copy_assets(dump_dir, output_dir)
+    db, dump, out, _site_name, _excluded, db_path = _open_db_and_copy_assets(dump_dir, output_dir)
 
     tree = build_forum_tree(db.get_forums())
     type_label = {0: "category", 1: "forum", 2: "link"}
@@ -1494,6 +1505,7 @@ def list_forums(dump_dir: str, output_dir: str) -> None:
 
     _print(tree)
     db.close()
+    os.remove(db_path)
 
 
 def check_images(dump_dir: str, output_dir: str, url_mirrors_path: str | None = None,
@@ -1503,7 +1515,7 @@ def check_images(dump_dir: str, output_dir: str, url_mirrors_path: str | None = 
     which ones fail to resolve (via any --url-mirrors, or the network) —
     ahead of committing to a full, slow generate() run. Does not render the
     site or write any topic/forum/user pages."""
-    db, dump, out, _site_name, _excluded = _open_db_and_copy_assets(dump_dir, output_dir)
+    db, dump, out, _site_name, _excluded, db_path = _open_db_and_copy_assets(dump_dir, output_dir)
 
     users = db.get_all_users()
     forums = db.get_forums()
@@ -1525,6 +1537,7 @@ def check_images(dump_dir: str, output_dir: str, url_mirrors_path: str | None = 
         print("out hostnames that keep failing for --ignore-hosts. The rest will just be dropped.")
 
     db.close()
+    os.remove(db_path)
 
 
 def check_links(output_dir: str) -> None:
