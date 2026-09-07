@@ -1,12 +1,14 @@
 import re
 from pathlib import Path
 
+from generator.bbcode import PhpbbBBCodeParser
 from generator.generate import (
     _apache_redirects,
     _nginx_redirects,
     clean_disabled_feature_output,
     copy_assets,
     find_image_urls,
+    process_forum_descs,
     render_redirects,
 )
 
@@ -341,3 +343,40 @@ class TestCopyAssetsRecoversFromNestedDuplicates:
         # Still copies something (find_bad_attachments/--attachment-recovery
         # handle it from here) rather than silently copying nothing.
         assert (out / "assets" / "attachments" / "abc123" / "photo.png").read_bytes() == b"garbage one"
+
+
+class TestProcessForumDescsRespectsPageDepth:
+    # forum_desc is converted once per page depth actually used across the
+    # site (index.html at the root, forums/N.html one level down) — a
+    # forum description that embeds an internal link or asset must resolve
+    # correctly no matter which depth's parser rendered it. Real dump
+    # example (phpbbmodders.net forum 44, "phpBB Project"): a forum_desc
+    # containing an internal viewtopic.php link — see phpbb-archive
+    # security review, finding 12.
+
+    def _forum(self, desc):
+        return {"forum_id": 44, "forum_name": "phpBB Project", "forum_desc": desc,
+                "forum_desc_uid": "", "forum_type": 1, "parent_id": 0}
+
+    def test_internal_link_resolves_correctly_at_root_depth(self):
+        parser = PhpbbBBCodeParser(
+            smilies=[], attachments={}, assets_prefix="assets",
+            internal_topic_ids={12345}, board_hosts={"phpbbmodders.net"},
+        )
+        desc = '<r>More info at <URL url="http://phpbbmodders.net/board/viewtopic.php?f=44&amp;t=12345">here</URL>.</r>'
+        result = process_forum_descs([self._forum(desc)], parser)
+        assert 'href="topics/12345.html"' in result[0]["forum_desc"]
+
+    def test_internal_link_resolves_correctly_one_level_down(self):
+        # This is the page depth forums/N.html actually renders at — using
+        # the root-depth parser here (the original bug: render_forums()
+        # was passed the same parser instance used for index.html) instead
+        # produces href="topics/12345.html", which 404s from forums/44.html
+        # (resolves to forums/topics/12345.html instead of ../topics/...).
+        parser = PhpbbBBCodeParser(
+            smilies=[], attachments={}, assets_prefix="../assets",
+            internal_topic_ids={12345}, board_hosts={"phpbbmodders.net"},
+        )
+        desc = '<r>More info at <URL url="http://phpbbmodders.net/board/viewtopic.php?f=44&amp;t=12345">here</URL>.</r>'
+        result = process_forum_descs([self._forum(desc)], parser)
+        assert 'href="../topics/12345.html"' in result[0]["forum_desc"]

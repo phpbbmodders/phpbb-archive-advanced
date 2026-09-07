@@ -1725,12 +1725,31 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     if board_hosts_path:
         board_hosts |= load_board_hosts(Path(board_hosts_path))
 
-    # --- Shared parser (used for forum descs and user sigs as well as posts) ---
+    # --- Shared parsers (used for forum descs and the announcement, not
+    # post bodies — topics/forums/users pages convert those with their own
+    # per-post parser). Two instances, one per page depth actually used
+    # across the site: index.html/search.html sit at the site root
+    # (assets_prefix="assets"), forums/N.html, topics/N.html, and
+    # users/N.html all sit one level down (assets_prefix="../assets").
+    # Converting once and reusing the same HTML at both depths — the
+    # original bug here — bakes in whichever depth happened to run first,
+    # breaking any embedded asset/internal link on every page at the
+    # other depth. See phpbb-archive security review, finding 12.
     shared_parser = PhpbbBBCodeParser(
         smilies=smilies,
         attachments={},
         custom_bbcodes=custom_bbcodes,
-        assets_prefix="assets",  # index-level path; topics/forums use their own parser
+        assets_prefix="assets",
+        external_images=external_images,
+        internal_topic_ids=internal_topic_ids,
+        bad_smilies=bad_smilies,
+        board_hosts=board_hosts,
+    )
+    shared_parser_nested = PhpbbBBCodeParser(
+        smilies=smilies,
+        attachments={},
+        custom_bbcodes=custom_bbcodes,
+        assets_prefix="../assets",
         external_images=external_images,
         internal_topic_ids=internal_topic_ids,
         bad_smilies=bad_smilies,
@@ -1746,20 +1765,23 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     # Plain BBCode text authored for the archive itself (e.g. "this board is
     # now a read-only archive") rather than anything pulled from the dump —
     # uid="" since there's no phpBB UID annotation to strip from hand-written
-    # text. Shown on index/forum/topic pages, not user profiles.
+    # text. Shown on index/forum/topic pages, not user profiles. Converted
+    # once per depth (see above) rather than once and reused everywhere.
     announcement_html = None
+    announcement_html_nested = None
     if announcement_path:
         announcement_text = Path(announcement_path).read_text(encoding="utf-8")
         if announcement_text.strip():
             announcement_html = shared_parser.convert(announcement_text, uid="")
+            announcement_html_nested = shared_parser_nested.convert(announcement_text, uid="")
 
     # --- Pages ---
     forum_tree = prune_empty_categories(build_forum_tree(process_forum_descs(forums, shared_parser)))
 
     site_url = sitemap_url if not sitemap_url or sitemap_url.endswith("/") else sitemap_url + "/"
 
-    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name, announcement_html=announcement_html, site_url=site_url)
-    render_forums(env, out, db, users, shared_parser, forums, site_name=site_name, announcement_html=announcement_html)
+    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name, announcement_html=announcement_html_nested, site_url=site_url)
+    render_forums(env, out, db, users, shared_parser_nested, forums, site_name=site_name, announcement_html=announcement_html_nested)
     render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name)
     render_index(env, out, forum_tree or [], total_posts, site_name=site_name, announcement_html=announcement_html)
 
