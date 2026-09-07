@@ -51,7 +51,7 @@ usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--profile-position {left,right}]
                    [--favicon FILE | --favicon-url URL]
                    [--logo FILE | --logo-url URL] [--logo-natural-size]
-                   [--theme {light,dark}]
+                   [--theme {light,dark}] [--board-hosts FILE]
 
 Generate a static HTML archive from a phpBB MySQL dump
 
@@ -178,6 +178,19 @@ options:
                         (default) or dark. Has no effect when --style-css is
                         given, since a custom stylesheet is its own fixed
                         palette.
+  --board-hosts FILE    JSON array of extra hostnames this board is also known
+                        to have been reachable at (e.g. a former domain), in
+                        addition to the dump's own phpbb_config.server_name.
+                        Used to recognize a post's own viewtopic.php link back
+                        to this board so it can be rewritten to a relative in-
+                        archive link — without this, only a link that happens
+                        to use the domain currently in the dump is recognized,
+                        so a board that changed domains over its lifetime
+                        needs its other domains listed here. A topic id alone
+                        is not enough to tell: it's just a small integer, and
+                        two unrelated phpBB installs (or the same board on an
+                        old and current domain) can easily reuse the same one
+                        for a completely different topic.
 ```
 
 ### Fixing avatars the generator can't fetch on its own
@@ -234,6 +247,16 @@ Run `-i`/`--check-images` first to see which URLs currently fail to resolve, so 
 ```
 
 Walks every generated page's `href`/`src` attributes and flags two things: a link to a file that doesn't exist, and a `#anchor` link (e.g. `topics/106.html#p53377`, a permalink to one specific post) whose target file exists but doesn't actually contain that anchor — the more useful of the two, since a plain missing-page link is easy to spot by eye, but a stale anchor pointing at a post that got excluded or never recovered isn't. External URLs aren't touched here; that's `--ignore-hosts`/`--url-mirrors`'s job. Results go to `output/broken_links.json`.
+
+### Recognizing this board across domain changes
+
+A post linking back to its own board (`[url=http://.../viewtopic.php?t=42]...[/url]`) only gets rewritten into a relative in-archive link when the URL's own host is actually recognized as this board — a topic id alone isn't enough, since it's just a small integer that any other phpBB install (or this same board on a different domain) can just as easily reuse for a completely different topic. The dump's own `phpbb_config.server_name` is always recognized; `--board-hosts` adds any other domain this board has used over its lifetime:
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/ --board-hosts docs/contrib/board_hosts.json.example
+```
+
+[`docs/contrib/board_hosts.json.example`](docs/contrib/board_hosts.json.example) is a real-world example — the same board really was reachable at three different domains at different points in its history, each confirmed by real links found in its own dump. A community that later merged into this board is a different case: its own historical topic ids aren't guaranteed to line up with this board's numbering, so listing its domain here would risk rewriting a link to whatever unrelated topic now happens to share that id, rather than leaving it as a normal (still working) external link.
 
 ### Custom color scheme
 
