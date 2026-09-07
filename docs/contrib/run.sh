@@ -41,6 +41,5 @@ fi
     --sitemap-url https://phpbbmodders.net/ \
     --search \
     --logo-url https://www.phpbbmodders.com/modders-cog.gif \
-    --logo-natural-size \
     --favicon-url https://phpbbmodders.net/favicon.ico \
     "${extra_args[@]}"
