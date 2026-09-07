@@ -2,6 +2,8 @@
 
 phpbb-archive converts a phpBB 3.x MySQL dump into a self-contained static HTML archive. No server required — the output is plain files you can host anywhere (GitHub Pages, Neocities, nginx, etc.).
 
+This repo is a deployment of the tool for phpbbmodders.net — `./run.sh` wires every flag below to this board's own `config/` files in one command. See [`docs/SITE_SETUP.md`](docs/SITE_SETUP.md) for what each of those files is and does.
+
 ### What you need
 
 From your phpBB server, collect the following into a `dump/` directory:
@@ -44,10 +46,10 @@ Attachments (images, zip, rar), avatars, and `[img]`-tagged images that are miss
 ```output
 usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--avatar-overrides FILE] [-m] [--exclude FILE] [-l]
-                   [--url-mirrors FILE] [-i] [-c] [--incremental]
-                   [--ignore-hosts FILE] [--attachment-recovery DIR]
-                   [--style-css FILE] [--announcement FILE]
-                   [--sitemap-url URL] [--search]
+                   [--password-override FILE] [--url-mirrors FILE] [-i] [-c]
+                   [--incremental] [--ignore-hosts FILE]
+                   [--attachment-recovery DIR] [--style-css FILE]
+                   [--announcement FILE] [--sitemap-url URL] [--search]
                    [--profile-position {left,right}]
                    [--favicon FILE | --favicon-url URL]
                    [--logo FILE | --logo-url URL] [--logo-natural-size]
@@ -79,6 +81,14 @@ options:
   -l, --list-forums     Print every forum/category with its forum_id (indented
                         to show nesting), to help build an --exclude file,
                         instead of generating the archive
+  --password-override FILE
+                        Every forum with a phpBB access password set is
+                        excluded automatically, the same as --exclude — a
+                        static archive has no login to gate access behind.
+                        JSON file of forum IDs to include anyway: {"forums":
+                        [...]}, for an archive owner who knows the real
+                        password and consents to archiving that forum's
+                        content.
   --url-mirrors FILE    JSON file of {"url_prefix": "local_dir"} mappings. Any
                         external [img]/avatar URL starting with a prefix is
                         looked up in the matching local directory first,
@@ -217,6 +227,16 @@ options:
                         without --redirect-format.
 ```
 
+### Redirecting the old board's dynamic URLs to this archive
+
+Once the archive replaces the live board, old links (search results, bookmarks, forum posts elsewhere) still point at the dynamic URLs the live board used — `--redirect-format` writes a ready-to-use server-config snippet that 301-redirects them to the corresponding static page:
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/ --redirect-format nginx
+```
+
+The old install path (e.g. `/board/viewtopic.php` rather than a root-level `/viewtopic.php`) is auto-detected from the dump's own `phpbb_config.script_path`; pass `--redirect-old-prefix` only to override that. Add `--sitemap-url` if the redirect rule will run on a different host than wherever this archive itself ends up (e.g. the old board's own subdomain redirecting to a bare-domain archive) — without it, redirect targets are relative and only work when both are on the same host.
+
 ### Fixing avatars the generator can't fetch on its own
 
 Some avatars are remote URLs the generator can't reach (dead host, bot protection). Run `-m`/`--missing-avatars` first to see who's affected and get a starter file to fill in:
@@ -251,6 +271,20 @@ Then list them in an exclude file (excluding a category pulls in everything unde
 
 Excluded forums, their topics, and any attachment or external image that's only ever used inside them are never written to `output/` at all — not just unlinked.
 
+### Password-protected forums
+
+Any forum with a phpBB access password set (`forum_password` in the dump) is excluded automatically, the same as `--exclude` above — a static archive has no login to gate access behind, so leaving it publicly readable would defeat the point of the password. Run `-l`/`--list-forums` to see which forum_id(s) got auto-excluded this way (they show up the same as any other forum; check the generator's log output for which ones were password-protected).
+
+If you know the real password and want to archive that forum anyway, list its id(s) in a `--password-override` file:
+
+```json
+{"forums": [42]}
+```
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/ --password-override password_override.json
+```
+
 ### Mirroring blocked or dead external images
 
 If a source site blocks the generator (Cloudflare, robots rules) but you have direct file access to it, `--url-mirrors` lets you point specific URL prefixes at a local directory instead of hitting the network:
@@ -266,109 +300,53 @@ Run `-i`/`--check-images` first to see which URLs currently fail to resolve, so 
 `-l`/`-m`/`-i` inspect the dump before you generate; `-c`/`--check-links` inspects the archive after — it needs a real `output/` to scan, so run it once you have a build:
 
 ```bash
-.venv/bin/python -m generator.generate --dump dump/ --output output/
+./run.sh
 .venv/bin/python -m generator.generate --output output/ -c
 ```
 
-Walks every generated page's `href`/`src` attributes and flags two things: a link to a file that doesn't exist, and a `#anchor` link (e.g. `topics/106.html#p53377`, a permalink to one specific post) whose target file exists but doesn't actually contain that anchor — the more useful of the two, since a plain missing-page link is easy to spot by eye, but a stale anchor pointing at a post that got excluded or never recovered isn't. External URLs aren't touched here; that's `--ignore-hosts`/`--url-mirrors`'s job. Results go to `output/broken_links.json`.
+Walks every generated page's `href`/`src` attributes and flags two things: a link to a file that doesn't exist, and a `#anchor` link (e.g. `topics/106.html#p53377`, a permalink to one specific post) whose target file exists but doesn't actually contain that anchor — the more useful of the two, since a plain missing-page link is easy to spot by eye, but a stale anchor pointing at a post that got excluded or never recovered isn't. External URLs aren't touched here; that's `--ignore-hosts`/`--url-mirrors`'s job. Results go to `output/broken_links.json`. Running it against this deployment's own archive found nothing beyond a handful of pre-existing data quirks (a real but nonsensical `href` value inside a quoted phpBB source-code example, and a few spam posts missing a proper `http://` prefix) — no actual archive-navigation bugs.
 
 ### Recognizing this board across domain changes
 
-A post linking back to its own board (`[url=http://.../viewtopic.php?t=42]...[/url]`) only gets rewritten into a relative in-archive link when the URL's own host is actually recognized as this board — a topic id alone isn't enough, since it's just a small integer that any other phpBB install (or this same board on a different domain) can just as easily reuse for a completely different topic. The dump's own `phpbb_config.server_name` is always recognized; `--board-hosts` adds any other domain this board has used over its lifetime:
+A post linking back to phpbbmodders' own board only gets rewritten into a relative in-archive link when the link's own host is actually recognized as this board — a topic id alone isn't enough, since it's just a small integer that another phpBB install entirely (confirmed here: real links to `www.phpbb.com`, `rmcgirr83.org`, and dozens more) can just as easily reuse for a completely different topic. This board has really been reachable at three different domains over its lifetime, so `run.sh` passes [`config/board_hosts.json`](config/board_hosts.json) listing all three (`phpbbmodders.net`/`.com`/`.org`) alongside the dump's own `phpbb_config.server_name`.
 
-```bash
-.venv/bin/python -m generator.generate --dump dump/ --output output/ --board-hosts docs/contrib/board_hosts.json.example
-```
-
-[`docs/contrib/board_hosts.json.example`](docs/contrib/board_hosts.json.example) is a real-world example — the same board really was reachable at three different domains at different points in its history, each confirmed by real links found in its own dump. A community that later merged into this board is a different case: its own historical topic ids aren't guaranteed to line up with this board's numbering, so listing its domain here would risk rewriting a link to whatever unrelated topic now happens to share that id, rather than leaving it as a normal (still working) external link.
-
-### Redirecting the old board's dynamic URLs to this archive
-
-Once the archive replaces the live board, old links (search results, bookmarks, forum posts elsewhere) still point at the dynamic URLs the live board used (`viewtopic.php?t=42`) rather than this archive's own (`topics/42.html`). `--redirect-format` writes a ready-to-use server-config snippet that 301-redirects them:
-
-```bash
-.venv/bin/python -m generator.generate --dump dump/ --output output/ --redirect-format nginx
-```
-
-`apache` writes `output/.htaccess`; `nginx` writes `output/nginx-redirects.conf` (`include` it inside your `server {}` block). One generic rule per old script (`viewtopic.php`/`viewforum.php`/`memberlist.php`), driven by whatever `t=`/`f=`/`u=` id is actually in the incoming request — not a per-page list — so the file doesn't need regenerating just because the archive's content changes.
-
-The old board's scripts weren't necessarily reachable at the web root — phpBB tracks its own install path in `phpbb_config.script_path` (e.g. `/board` for `.../board/viewtopic.php`), and the rules need to match that. This is auto-detected from the dump; `--redirect-old-prefix` overrides it for a board that moved paths since the dump was taken (`--redirect-old-prefix ""` forces no prefix).
-
-Redirect targets are relative (`/topics/42.html`) by default, which only works when the rule runs on the same host this archive is deployed to. Add `--sitemap-url` to make them absolute instead, for when the redirect has to run somewhere else — e.g. the old board's own subdomain (`board.example.com`) redirecting to a bare-domain archive (`example.com`).
+rmcgirr83.org's own community later merged into this board, but its domain is deliberately *not* in that list even though its links are common in the dump: its own historical topic ids aren't confirmed to have survived the merge unchanged, so treating it as internal would risk rewriting a link to whatever unrelated topic now happens to share that id here. A link to it stays a normal (still working) external link.
 
 ### Custom color scheme
 
-The archive's own layout ships with a neutral default palette. `--style-css` swaps it for any stylesheet you point at:
-
-```bash
-.venv/bin/python -m generator.generate --dump dump/ --output output/ --style-css my-style.css
-```
+The archive's own layout ships with a neutral default palette. `--style-css` swaps it for any stylesheet you point at — this deployment uses [`config/phpbbmodders-style.css`](config/phpbbmodders-style.css), colors approximating the live board's own theme.
 
 Every generated page links `assets/style.css` rather than inlining it, so re-theming an already-built archive later is just dropping a new `assets/style.css` into its `output/` (or wherever it's deployed) — no regeneration required.
 
-[`docs/contrib/phpbbmodders-style.css.example`](docs/contrib/phpbbmodders-style.css.example) is a real-world example: colors approximating a live board's own `prosilver` child theme (dark page background, an accent-colored frame, and matching header/category-bar colors), pulled from that theme's actual CSS rather than guessed.
-
-`--theme dark` swaps the built-in neutral palette for a dark one, without needing a custom `--style-css`:
-
-```bash
-.venv/bin/python -m generator.generate --dump dump/ --output output/ --theme dark
-```
-
-Has no effect when `--style-css` is also given — a custom stylesheet is its own fixed palette either way.
+`--theme dark` swaps the built-in neutral palette for a dark one without a custom `--style-css`; has no effect here since this deployment already uses one.
 
 ### Favicon and board logo
 
-Neither a board's favicon nor its logo lives anywhere in a bare SQL dump. `--favicon`/`--logo` take a local image file; `--favicon-url`/`--logo-url` fetch one live instead — useful since the archive is usually built well after the original board stopped actively maintaining local copies of either:
+Neither phpBBModders' favicon nor its logo lives anywhere in the SQL dump, so `run.sh` fetches both live: `--favicon-url https://phpbbmodders.net/favicon.ico` and `--logo-url https://www.phpbbmodders.com/modders-cog.gif`. A URL that can't be reached is skipped with a warning rather than failing the whole run — this matters in practice here, since `phpbbmodders.net`'s own copy of the logo is blocked by a Cloudflare JS challenge, while the `.com` copy isn't.
 
-```bash
-.venv/bin/python -m generator.generate --dump dump/ --output output/ \
-    --favicon-url https://your-board.example.com/favicon.ico \
-    --logo-url https://your-board.example.com/logo.png
-```
-
-A URL that can't be reached (dead link, or blocked by something like a Cloudflare JS challenge) is skipped with a warning — same graceful treatment as every other network fetch in this generator — rather than failing the whole run.
-
-The logo's on-page size prefers phpBB's own configured `sitelogo_width`/`sitelogo_height` when the dump has them set; otherwise it's computed proportionally from the actual image file's real dimensions (scaled to fit within a 50px height / 200px width box, never upscaled) rather than a flat CSS cap that ignores aspect ratio. `--logo-natural-size` shows it unscaled at its own original size instead.
+The logo's on-page size uses this board's own configured `sitelogo_width`/`sitelogo_height` (84×80) rather than the source file's raw pixel dimensions (324×308) or a flat CSS cap — `--logo-natural-size` would show it unscaled at that raw size instead, which `run.sh` doesn't pass.
 
 ### Board-wide announcement
 
-`--announcement` shows a notice on the index, every forum page, and every topic page — written fresh for the archive (e.g. "this board is now read-only"), not pulled from the dump:
-
-```bash
-.venv/bin/python -m generator.generate --dump dump/ --output output/ --announcement docs/contrib/announcement.txt.example
-```
-
-The file is plain BBCode text, parsed the same way post content is:
-
-```
-[b]This board is now a read-only archive.[/b] Registration, posting, and private messaging have been disabled.
-```
+`--announcement` shows a notice on the index, every forum page, and every topic page — written fresh for the archive (e.g. "this board is now read-only"), not pulled from the dump. This deployment's text lives in [`config/announcement.txt`](config/announcement.txt); an empty file (the default) renders nothing.
 
 ### Sitemap and robots.txt
 
-`--sitemap-url` writes `output/sitemap.xml` (index, every forum, every topic — each with a `<lastmod>` from its most recent post) and `output/robots.txt` pointing at it:
-
-```bash
-.venv/bin/python -m generator.generate --dump dump/ --output output/ --sitemap-url https://your-archive.example.com/
-```
+`--sitemap-url` writes `output/sitemap.xml` (index, every forum, every topic — each with a `<lastmod>` from its most recent post) and `output/robots.txt` pointing at it. This deployment uses `https://phpbbmodders.net/`, its real hosting URL.
 
 Every other link the archive generates is relative, so it works at any path — but sitemap entries have to be absolute URLs, which is why this flag needs the full deployment URL rather than inferring it. Excluded forums/topics are already left out of `output/` entirely, so they're never in the sitemap either.
 
-Every topic page also carries Open Graph and Twitter Card meta tags (title, description from the opening post, site name) unconditionally, so a shared link shows a real preview instead of nothing. `og:url` is the one tag that needs an absolute URL, so it only appears when `--sitemap-url` is set — everything else works with or without it.
+Every topic page also carries Open Graph and Twitter Card meta tags (title, description from the opening post, site name) unconditionally, so a shared link shows a real preview instead of nothing. `og:url` is the one tag that needs an absolute URL, so it only appears with `--sitemap-url` set (which `run.sh` already does) — everything else works regardless.
 
 ### Full-text search
 
-`--search` adds `search.html` (linked from every page's header) and indexes every generated page with [Pagefind](https://pagefind.app/), a static client-side search engine — no server, no external service, same self-contained philosophy as the rest of the archive:
-
-```bash
-.venv/bin/python -m generator.generate --dump dump/ --output output/ --search
-```
+`--search` adds `search.html` (linked from every page's header) and indexes every generated page with [Pagefind](https://pagefind.app/), a static client-side search engine — no server, no external service, same self-contained philosophy as the rest of the archive. This deployment's `run.sh` already passes it.
 
 Requires the `pagefind[bin]` package (already in `generator/requirements.txt`) — it ships a real compiled search binary via pip, no Node.js needed. The generator runs it as a subprocess after every other page is written, so search results always reflect the current run.
 
-Result titles come from a `data-pagefind-meta="title:..."` attribute the archive sets on every page's `<body>` — without it, Pagefind defaults to each page's first `<h1>`, which on this archive is always just the site name, making every search result look identical. `search.html` itself is excluded from the index (`data-pagefind-ignore`) since it has no content of its own, just the search widget.
+Result titles come from a `data-pagefind-meta="title:..."` attribute the archive sets on every page's `<body>` — without it, Pagefind defaults to each page's first `<h1>`, which on this archive is always just the site name, making every search result look identical. `search.html` itself is excluded from the index (`data-pagefind-ignore`) since it has no content of its own, just the search widget. The widget's colors come from the same palette as everything else — see the `#search` block in [`config/phpbbmodders-style.css`](config/phpbbmodders-style.css).
 
-**Testing locally, `search.html` must be served over `http://`/`https://`, not opened as a `file://` path.** Pagefind's engine can't fetch its own index under `file://` — the query box will accept input and show "Searching for…" but never return results, with no error shown anywhere. Any static file server works for testing, e.g. `python3 -m http.server` from inside `output/` (see `docs/contrib/serve.sh`); a real deployment is served over HTTP(S) anyway, so this only matters when checking the archive locally before publishing it.
+**Testing locally, `search.html` must be served over `http://`/`https://`, not opened as a `file://` path.** Pagefind's engine can't fetch its own index under `file://` — the query box will accept input and show "Searching for…" but never return results, with no error shown anywhere. Any static file server works for testing, e.g. `python3 -m http.server` from inside `output/`; the real deployment at `https://phpbbmodders.net/` is served over HTTPS anyway, so this only matters when checking the archive locally before publishing it.
 
 ## What gets generated
 
@@ -378,12 +356,12 @@ output/
 ├── forums/<id>.html    # One page per forum (topic list)
 ├── topics/<id>.html    # One page per thread (all posts)
 ├── users/<id>.html     # User profile pages
-├── assets/             # CSS, images, smilies, avatars, attachments, logo
-├── favicon.<ext>        # Only with --favicon/--favicon-url
-├── sitemap.xml          # Only with --sitemap-url
+├── assets/              # CSS, images, smilies, avatars, attachments, logo
+├── favicon.<ext>         # Only with --favicon/--favicon-url
+├── sitemap.xml           # Only with --sitemap-url
 ├── robots.txt            # Only with --sitemap-url
-├── search.html           # Only with --search
-└── pagefind/              # Only with --search — search index and widget
+├── search.html            # Only with --search
+└── pagefind/               # Only with --search — search index and widget
 ```
 
 All links are relative, so the archive works at any path — subdirectory, GitHub Pages project site, or offline from disk.

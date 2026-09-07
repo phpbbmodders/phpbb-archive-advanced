@@ -85,6 +85,8 @@ real, not estimates).
 
 `--exclude` + `expand_exclusions_recursively()`: excluding a category excludes every descendant automatically — a forum can never end up orphaned (parent hidden, child still shown prominently at the top level), which is the wrong failure direction for a privacy feature. Excluded forums, their topics, and any attachment/external image used only inside them are never copied or downloaded, not just unlinked from the rendered HTML.
 
+- **Password-protected forums (`phpbb_forums.forum_password`) weren't recognized as private content anywhere**: the column was tracked in every dump but nothing in `db.py`/`generate.py` read it, so the only way to keep one out of the archive was to notice it and add it to `--exclude` by hand. A password-protected forum is now auto-excluded by default (same treatment as `--exclude`, including recursive descendant exclusion and attachment/image exclusion) via a new `db.get_password_protected_forum_ids()`; `--password-override` (a JSON file of forum IDs, mirroring `--exclude`'s own shape) opts specific forums back in for an archive owner who knows the real password and consents to archiving that content. phpbbmodders.net's own real dump has zero forums with a password actually set, so this was verified by temporarily marking a real forum (125, "Modders MOD support") as password-protected in a throwaway copy of the dump: auto-exclusion correctly excluded it, `--password-override` naming it correctly included it, and a real regeneration of the unmodified dump confirmed zero behavior change (same 26 forum pages as before).
+
 ## Template rework
 
 - Real `forum_type` handling: categories (0), forums (1), and external links (2) render correctly instead of everything being treated as a forum.

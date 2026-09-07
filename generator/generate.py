@@ -131,6 +131,16 @@ def load_exclusions(path: Path) -> set[int]:
     return {int(i) for i in data.get("categories", [])} | {int(i) for i in data.get("forums", [])}
 
 
+def load_password_override(path: Path) -> set[int]:
+    """Load a JSON file of forum IDs to include despite having a
+    forum_password set: {"forums": [...]} — for an archive owner who knows
+    the real password and consents to archiving that forum anyway. Without
+    this, every password-protected forum is auto-excluded by default (see
+    generate()/_open_db_and_copy_assets())."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {int(i) for i in data.get("forums", [])}
+
+
 def expand_exclusions_recursively(seed_ids: set[int], all_forums: list[dict]) -> set[int]:
     """Expand a set of forum/category IDs to include every descendant,
     recursively. Excluding a category always excludes everything under it —
@@ -1528,6 +1538,7 @@ def run_pagefind(out: Path) -> None:
 
 def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
                               exclude_path: str | None = None,
+                              password_override_path: str | None = None,
                               style_css_path: str | None = None,
                               favicon_path: str | None = None,
                               logo_path: str | None = None,
@@ -1593,8 +1604,23 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
     # --exclude — excluded from copying unconditionally, not just when a
     # forum happens to be excluded too.
     excluded_physical_filenames: set[str] = db.get_private_message_attachment_physical_filenames()
-    if exclude_path:
-        seed_ids = load_exclusions(Path(exclude_path))
+
+    # Password-protected forums (forum_password set) are auto-excluded by
+    # default, the same as an --exclude'd forum — the old board's password
+    # prompt gated access to that content, and a public static archive with
+    # no login has no equivalent gate to reproduce. --password-override
+    # opts specific forums back in for an archive owner who knows the real
+    # password and consents to archiving it anyway. This runs regardless of
+    # whether --exclude was given at all.
+    seed_ids = load_exclusions(Path(exclude_path)) if exclude_path else set()
+    password_override_ids = load_password_override(Path(password_override_path)) if password_override_path else set()
+    password_protected_ids = db.get_password_protected_forum_ids() - password_override_ids
+    if password_protected_ids:
+        logger.info("Auto-excluding %d password-protected forum(s): %s",
+                    len(password_protected_ids), sorted(password_protected_ids))
+    seed_ids |= password_protected_ids
+
+    if seed_ids:
         excluded_forum_ids = expand_exclusions_recursively(seed_ids, db.get_forums())
         excluded_physical_filenames |= db.get_attachment_physical_filenames_in_forums(excluded_forum_ids)
         logger.info("Excluding %d forum(s)/categor(y/ies) from the archive (%d listed, %d after including descendants)",
@@ -1640,7 +1666,8 @@ def clean_disabled_feature_output(out: Path, search: bool, sitemap_url: str | No
 
 
 def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None = None,
-             exclude_path: str | None = None, url_mirrors_path: str | None = None,
+             exclude_path: str | None = None, password_override_path: str | None = None,
+             url_mirrors_path: str | None = None,
              incremental: bool = False, ignored_hosts_path: str | None = None,
              attachment_recovery_dir: str | None = None, style_css_path: str | None = None,
              announcement_path: str | None = None, sitemap_url: str | None = None,
@@ -1702,7 +1729,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
             logger.info("Clearing previous output: %s", out)
             shutil.rmtree(out)
 
-    db, dump, out, site_name, excluded_forum_ids, db_path, excluded_physical_filenames = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path, favicon_path, logo_path, theme)
+    db, dump, out, site_name, excluded_forum_ids, db_path, excluded_physical_filenames = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, password_override_path, style_css_path, favicon_path, logo_path, theme)
 
     # --- Image/zip/rar attachments missing or corrupted in the source dump ---
     bad_attachments_map = find_bad_attachments(db, out, excluded_physical_filenames)
@@ -2056,6 +2083,12 @@ def main() -> None:
                          help="Print every forum/category with its forum_id (indented to show "
                               "nesting), to help build an --exclude file, instead of generating "
                               "the archive")
+    parser.add_argument("--password-override", metavar="FILE",
+                         help="Every forum with a phpBB access password set is excluded "
+                              "automatically, the same as --exclude — a static archive has no "
+                              "login to gate access behind. JSON file of forum IDs to include "
+                              'anyway: {"forums": [...]}, for an archive owner who knows the real '
+                              "password and consents to archiving that forum's content.")
     parser.add_argument("--url-mirrors", metavar="FILE",
                          help='JSON file of {"url_prefix": "local_dir"} mappings. Any external '
                               "[img]/avatar URL starting with a prefix is looked up in the matching "
@@ -2193,7 +2226,8 @@ def main() -> None:
     elif args.check_links:
         check_links(args.output)
     else:
-        generate(args.dump, args.output, args.avatar_overrides, args.exclude, args.url_mirrors,
+        generate(args.dump, args.output, args.avatar_overrides, args.exclude, args.password_override,
+                 args.url_mirrors,
                  args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
                  args.announcement, args.sitemap_url, args.search, args.profile_position,
                  args.favicon, args.favicon_url, args.logo, args.logo_url,

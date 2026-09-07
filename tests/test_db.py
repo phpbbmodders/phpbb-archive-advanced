@@ -17,12 +17,14 @@ CREATE TABLE `phpbb_forums` (
   `parent_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
   `left_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
   `right_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `forum_password` varchar(255) NOT NULL DEFAULT '',
   PRIMARY KEY (`forum_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
-INSERT INTO `phpbb_forums` VALUES (1,'General','General discussion',5,20,100,1700000000,'testuser',0,1,2);
-INSERT INTO `phpbb_forums` VALUES (2,'Ordering Forum','Sticky/announce ordering fixture',3,3,200,3000,'testuser',0,3,4);
-INSERT INTO `phpbb_forums` VALUES (3,'Third Forum','Global announcement home forum',1,1,300,2000,'testuser',0,5,6);
+INSERT INTO `phpbb_forums` VALUES (1,'General','General discussion',5,20,100,1700000000,'testuser',0,1,2,'');
+INSERT INTO `phpbb_forums` VALUES (2,'Ordering Forum','Sticky/announce ordering fixture',3,3,200,3000,'testuser',0,3,4,'');
+INSERT INTO `phpbb_forums` VALUES (3,'Third Forum','Global announcement home forum',1,1,300,2000,'testuser',0,5,6,'');
+INSERT INTO `phpbb_forums` VALUES (4,'Locked Forum','Password-protected fixture',0,0,0,0,'',0,7,8,'$H$9somehash');
 
 CREATE TABLE `phpbb_users` (
   `user_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
@@ -158,7 +160,7 @@ def db_path(tmp_path):
 def test_import_creates_tables(db_path):
     db = PhpbbDatabase(db_path, table_prefix="phpbb_")
     forums = db.get_forums()
-    assert len(forums) == 3
+    assert len(forums) == 4
     assert forums[0]["forum_name"] == "General"
 
 
@@ -236,6 +238,14 @@ def test_get_global_announcements_respects_exclusion(db_path):
     db = PhpbbDatabase(db_path, table_prefix="phpbb_")
     globals_ = db.get_global_announcements(exclude_forum_ids={3})
     assert globals_ == []
+
+
+def test_get_password_protected_forum_ids(db_path):
+    # forum_password='' (phpBB's own default/no-password value) must never
+    # be mistaken for a real password, and the reverse — a real hash, no
+    # matter its content — must always count as protected.
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    assert db.get_password_protected_forum_ids() == {4}
 
 
 def test_get_posts(db_path):

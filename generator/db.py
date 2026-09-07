@@ -354,6 +354,17 @@ class PhpbbDatabase:
             )
         return self._query(f'SELECT * FROM "{self._table("attachments")}"')
 
+    def get_password_protected_forum_ids(self) -> set[int]:
+        """forum_id values with a forum_password set (phpBB's per-forum
+        access-password feature) — '' is phpBB's own default/no-password
+        value, never a real hash. A password-protected forum is private
+        content the same way an --exclude'd one is; see
+        generate()/_open_db_and_copy_assets() for how this is applied."""
+        rows = self._query(
+            f'SELECT forum_id FROM "{self._table("forums")}" WHERE forum_password != \'\''
+        )
+        return {r["forum_id"] for r in rows}
+
     def get_private_message_attachment_physical_filenames(self) -> set[str]:
         """physical_filename values for private-message attachments
         (in_message=1) — these must never be copied into assets/, the same
