@@ -1384,6 +1384,13 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
             # download_external_images() skip a URL whose cached file is
             # already present; a URL that failed last run is retried.
             logger.info("Incremental run: clearing generated pages, keeping cached assets")
+            # .phpbb_archive.db is a one-time migration cleanup: the
+            # database now always builds in a system-temp file (see
+            # _open_db_and_copy_assets), never under output/, but an
+            # incremental run against an existing output/ built before
+            # that fix would otherwise leave its old copy sitting there
+            # forever — incremental mode never revisits a file it isn't
+            # explicitly told to look at.
             for name in ("forums", "topics", "users", "index.html", ".phpbb_archive.db"):
                 target = out / name
                 if target.is_dir():
