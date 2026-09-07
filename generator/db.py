@@ -8,11 +8,121 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _split_by_string_literals(sql: str, backslash_escapes: bool = True) -> list[tuple[str, bool]]:
+    """Split sql into (chunk, is_literal) pairs at single-quoted string
+    boundaries. A doubled '' is always honored as an escaped quote (valid
+    ANSI SQL); backslash_escapes additionally honors a backslash-escaped
+    \\' the way raw mysqldump output actually quotes a value.
+
+    backslash_escapes must be False once escape sequences have already
+    been resolved to literal characters (see import_mysql_dump) — a
+    literal backslash at that point is just a character, not the start of
+    an escape sequence, and treating it as one would misjudge where a
+    string actually ends.
+
+    Covers the whole input in order, so a caller can transform only the
+    non-literal chunks (actual SQL syntax) while leaving literal chunks
+    (real row data) untouched."""
+    segments: list[tuple[str, bool]] = []
+    buf: list[str] = []
+    in_string = False
+    i = 0
+    n = len(sql)
+    while i < n:
+        c = sql[i]
+        if not in_string:
+            if c == "'":
+                if buf:
+                    segments.append(("".join(buf), False))
+                    buf = []
+                in_string = True
+                buf.append(c)
+            else:
+                buf.append(c)
+            i += 1
+        else:
+            if backslash_escapes and c == "\\" and i + 1 < n:
+                buf.append(sql[i:i + 2])
+                i += 2
+                continue
+            if c == "'":
+                if i + 1 < n and sql[i + 1] == "'":
+                    buf.append("''")
+                    i += 2
+                    continue
+                buf.append(c)
+                segments.append(("".join(buf), True))
+                buf = []
+                in_string = False
+                i += 1
+                continue
+            buf.append(c)
+            i += 1
+    if buf:
+        segments.append(("".join(buf), in_string))
+    return segments
+
+
+def _apply_outside_strings(sql: str, transform, backslash_escapes: bool = True) -> str:
+    """Apply `transform` to every chunk of sql that is NOT inside a
+    string literal (see _split_by_string_literals), leaving literal
+    chunks unchanged. Keeps MySQL-syntax-only substitutions (comments,
+    type keywords, backtick identifiers) from also matching inside real
+    row data that happens to look similar — e.g. a post discussing SQL
+    that itself contains "unsigned", a C-style /* comment */, or a
+    backtick, or code ending in a trailing comma before a ')'."""
+    return "".join(
+        transform(chunk) if not is_literal else chunk
+        for chunk, is_literal in _split_by_string_literals(sql, backslash_escapes)
+    )
+
+
+_MYSQL_ESCAPE_MAP = {
+    "'": "''",  # → SQL-standard escaped quote, so the literal stays open
+    '"': '"',
+    "n": "\n",
+    "t": "\t",
+    "r": "\r",
+    "0": "\0",
+    "\\": "\\",
+    "Z": "\x1a",
+}
+
+
+def _unescape_mysql_string_literals(sql: str) -> str:
+    """Resolve MySQL's backslash-escaped value content into literal
+    characters, in one left-to-right pass. A chain of independent global
+    .replace() calls (the previous approach) can misparse a value that
+    itself ends in an escaped backslash immediately followed by the real
+    closing quote (e.g. a stored value ending "...\\\\", a literal
+    backslash) — replacing \\' → '' first would consume the second
+    backslash together with that closing quote as if they were an
+    escaped-quote pair, corrupting where the string actually ends. A
+    single pass has no such ambiguity: each escape is resolved and
+    consumed exactly once, left to right. An unrecognized \\X drops the
+    backslash and keeps X, matching MySQL's own fallback behavior."""
+    out = []
+    i = 0
+    n = len(sql)
+    while i < n:
+        c = sql[i]
+        if c == "\\" and i + 1 < n:
+            nxt = sql[i + 1]
+            out.append(_MYSQL_ESCAPE_MAP.get(nxt, nxt))
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def import_mysql_dump(sql_path: str, db_path: str) -> None:
     """Convert a mysqldump file to a SQLite database.
 
     Handles MySQL-specific syntax: backtick quoting, AUTO_INCREMENT,
-    ENGINE=, unsigned integers, charset declarations, etc.
+    ENGINE=, unsigned integers, charset declarations, etc. — applied only
+    outside string literals (see _apply_outside_strings), so real row
+    data is never mistaken for the surrounding SQL syntax.
     """
     import os
     if os.path.exists(db_path):
@@ -21,10 +131,12 @@ def import_mysql_dump(sql_path: str, db_path: str) -> None:
     with open(sql_path, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
 
-    # Remove multi-line /* ... */ comments (including MySQL conditional comments /*!...*/)
-    content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
-
-    # Remove MySQL-specific constructs line by line
+    # Remove MySQL-specific constructs line by line. Comments are left
+    # alone here — stripped later, together with the rest of the
+    # MySQL-only syntax, once string literals are unambiguous to find
+    # (see below) — a line-by-line prefix check can't accidentally match
+    # inside a value's content either way, since a raw mysqldump escapes
+    # any embedded newline in a value rather than emitting one literally.
     lines = []
     for line in content.split("\n"):
         stripped = line.strip()
@@ -49,37 +161,41 @@ def import_mysql_dump(sql_path: str, db_path: str) -> None:
 
     sql = "\n".join(lines)
 
-    # MySQL dump escapes special chars in string values; SQLite stores them literally.
-    # Convert MySQL escape sequences to actual characters before importing.
-    sql = sql.replace("\\'", "''")   # \' → '' (SQLite-style quote escape)
-    sql = sql.replace('\\"', '"')    # \" → " (double-quote in single-quoted strings)
-    sql = sql.replace("\\n", "\n")   # \n → newline
-    sql = sql.replace("\\t", "\t")   # \t → tab
-    sql = sql.replace("\\r", "\r")   # \r → carriage return
-    sql = sql.replace("\\\\", "\\")  # \\ → backslash (must be last)
+    # MySQL dump escapes special chars in string values; SQLite stores
+    # them literally. Resolve those escapes before anything below, which
+    # assumes backslashes no longer mean anything special (see
+    # _split_by_string_literals's backslash_escapes parameter).
+    sql = _unescape_mysql_string_literals(sql)
 
-    # Removing KEY lines can leave a trailing comma before the closing paren:
-    #   col TEXT,\n) → col TEXT\n)
-    sql = re.sub(r",(\s*\))", r"\1", sql)
+    def _strip_mysql_syntax(chunk: str) -> str:
+        # Comments (including MySQL conditional comments /*!...*/)
+        chunk = re.sub(r"/\*.*?\*/", "", chunk, flags=re.DOTALL)
+        # Removing KEY lines above can leave a trailing comma before the
+        # closing paren: col TEXT,\n) → col TEXT\n)
+        chunk = re.sub(r",(\s*\))", r"\1", chunk)
+        # Strip MySQL-specific type modifiers and keywords
+        chunk = re.sub(r"\bunsigned\b", "", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"\bAUTO_INCREMENT\b", "", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"\)\s*ENGINE=.*?;", ");", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"DEFAULT CHARSET=\w+", "", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"COLLATE \w+", "", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"CHARACTER SET \w+", "", chunk, flags=re.IGNORECASE)
+        # Replace MySQL integer types with SQLite INTEGER (order matters: specific before generic)
+        chunk = re.sub(r"\bmediumint\(\d+\)", "INTEGER", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"\bsmallint\(\d+\)", "INTEGER", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"\btinyint\(\d+\)", "INTEGER", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"\bbigint\(\d+\)", "INTEGER", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"\bint\(\d+\)", "INTEGER", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"\bmediumtext\b", "TEXT", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"\blongtext\b", "TEXT", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"\bvarchar\(\d+\)", "TEXT", chunk, flags=re.IGNORECASE)
+        # Replace backticks with double quotes for identifiers
+        return chunk.replace("`", '"')
 
-    # Strip MySQL-specific type modifiers and keywords
-    sql = re.sub(r"\bunsigned\b", "", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"\bAUTO_INCREMENT\b", "", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"\)\s*ENGINE=.*?;", ");", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"DEFAULT CHARSET=\w+", "", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"COLLATE \w+", "", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"CHARACTER SET \w+", "", sql, flags=re.IGNORECASE)
-    # Replace MySQL integer types with SQLite INTEGER (order matters: specific before generic)
-    sql = re.sub(r"\bmediumint\(\d+\)", "INTEGER", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"\bsmallint\(\d+\)", "INTEGER", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"\btinyint\(\d+\)", "INTEGER", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"\bbigint\(\d+\)", "INTEGER", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"\bint\(\d+\)", "INTEGER", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"\bmediumtext\b", "TEXT", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"\blongtext\b", "TEXT", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"\bvarchar\(\d+\)", "TEXT", sql, flags=re.IGNORECASE)
-    # Replace backticks with double quotes for identifiers
-    sql = sql.replace("`", '"')
+    # backslash_escapes=False: _unescape_mysql_string_literals() above
+    # already resolved every escape sequence, so a backslash from here on
+    # is just a literal character, not the start of one.
+    sql = _apply_outside_strings(sql, _strip_mysql_syntax, backslash_escapes=False)
 
     conn = sqlite3.connect(db_path)
     conn.executescript(sql)

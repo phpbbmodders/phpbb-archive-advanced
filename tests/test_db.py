@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import pytest
 from generator.db import import_mysql_dump, PhpbbDatabase
@@ -130,6 +131,39 @@ def test_import_creates_tables(db_path):
     forums = db.get_forums()
     assert len(forums) == 1
     assert forums[0]["forum_name"] == "General"
+
+
+def _import_single_value(tmp_path, value: str) -> str:
+    """Import a minimal one-row dump and return the stored value verbatim
+    — for checking that import_mysql_dump() doesn't mistake real row data
+    for MySQL-only syntax it strips (see the tests below)."""
+    escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+    sql_file = tmp_path / "content.sql"
+    sql_file.write_text(
+        "CREATE TABLE `t` (`v` mediumtext NOT NULL);\n"
+        f"INSERT INTO `t` VALUES ('{escaped}');\n",
+        encoding="utf-8",
+    )
+    db_file = tmp_path / "content.db"
+    import_mysql_dump(str(sql_file), str(db_file))
+    conn = sqlite3.connect(str(db_file))
+    return conn.execute('SELECT v FROM "t"').fetchone()[0]
+
+
+class TestImportPreservesRowContent:
+    # import_mysql_dump()'s MySQL-syntax cleanup (comments, type keywords,
+    # backtick identifiers, a trailing-comma fixup) used to run as plain
+    # regexes over the whole file, so it could match text that merely
+    # *looks* like SQL syntax inside a post's own stored content — see
+    # phpbb-archive security review, finding 4.
+
+    def test_preserves_ddl_keywords_and_comment_syntax(self, tmp_path):
+        value = "unsigned mediumtext /*sample*/ `tick`"
+        assert _import_single_value(tmp_path, value) == value
+
+    def test_preserves_trailing_comma_before_paren(self, tmp_path):
+        value = "call myFunc(a, b,)  and enjoy"
+        assert _import_single_value(tmp_path, value) == value
 
 
 def test_get_topics(db_path):
