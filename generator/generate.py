@@ -1205,14 +1205,25 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
         for post in posts:
             uid = post.get("bbcode_uid", "")
             text = post.get("post_text", "")
-            rendered = parser.convert(text, uid=uid, post_id=post["post_id"])
+            rendered = parser.convert(text, uid=uid, post_id=post["post_id"],
+                                       enable_smilies=bool(post.get("enable_smilies", 1)))
 
-            author = users.get(post.get("poster_id", 0))
+            poster_id = post.get("poster_id", 0)
+            # user_id=1 is phpBB's own reserved "Anonymous" account — a
+            # real row, but not a real profile, and not who actually wrote
+            # this post. The poster's own name as typed at posting time is
+            # in post_username (phpbb_posts) instead; template falls back
+            # to it (see topic.html's author-less branch) rather than
+            # linking every guest post to the same generic account page.
+            author = users.get(poster_id) if poster_id != 1 else None
             author_ctx = None
             if author:
                 rank = get_user_rank(author, ranks)
                 sig_html = ""
-                if author.get("user_sig"):
+                # enable_sig is a per-post checkbox (phpbb_posts.enable_sig),
+                # not a per-user setting — the same user's signature can
+                # legitimately show on some of their posts and not others.
+                if author.get("user_sig") and post.get("enable_sig", 1):
                     sig_html = parser.convert(
                         author["user_sig"],
                         uid=author.get("user_sig_bbcode_uid", ""),

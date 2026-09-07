@@ -131,6 +131,21 @@ class TestSmilies:
         # Should still produce an img tag with best-effort path
         assert "<img" in result
 
+    def test_enable_smilies_false_leaves_legacy_comment_unresolved(self, parser):
+        # enable_smilies mirrors phpbb_posts.enable_smilies, a per-post
+        # checkbox the poster could uncheck — the stored comment format is
+        # unchanged either way, only whether it resolves to an image.
+        result = parser.convert(
+            '<!-- s:) --><img src="{SMILIES_PATH}/icon_e_smile.gif" /><!-- s:) -->',
+            uid="", enable_smilies=False)
+        assert "<img" not in result
+
+    def test_enable_smilies_false_leaves_xml_e_tag_as_raw_code(self, parser):
+        result = parser.convert("<t>hi <E>:)</E></t>", uid="", enable_smilies=False)
+        assert "<img" not in result
+        assert ":)" in result
+        assert "<E>" not in result
+
 
 class TestXmlCodeBlocks:
     # A post's overall content can be XML-wrapped (<r>/<t>) while still

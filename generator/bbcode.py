@@ -197,26 +197,33 @@ class PhpbbBBCodeParser:
             result += '\n<div class="post-attachments">' + "".join(trailing) + "</div>"
         return result
 
-    def convert(self, text: str, uid: str, post_id: int | None = None) -> str:
+    def convert(self, text: str, uid: str, post_id: int | None = None,
+                enable_smilies: bool = True) -> str:
         """Convert phpBB BBCode text to HTML.
 
         phpBB 3.2+ stores text in one of two formats:
         - Old UID BBCode: [b:abc123]text[/b:abc123]
         - XML markup:     <r><B><s>[b]</s>text<e>[/b]</e></B></r>
         Detect which format and dispatch accordingly.
+
+        enable_smilies mirrors phpbb_posts.enable_smilies — a per-post flag
+        the poster could uncheck, storing the smiley source (a code like
+        ":)", or an <E> element) unconverted; False leaves that raw text
+        as-is rather than resolving it to an image, matching what the post
+        actually looked like when it was written.
         """
         original_text = text  # saved for trailing-attachment detection
 
         if text.lstrip().startswith("<r>") or text.lstrip().startswith("<t>"):
             # phpBB XML markup format — already has explicit <br/> for line breaks
-            text = self._convert_xml_markup(text, post_id)
+            text = self._convert_xml_markup(text, post_id, enable_smilies)
         else:
             # Step 1: Strip UID suffixes from BBCode tags
             if uid:
                 text = text.replace(f":{uid}]", "]")
 
             # Step 2: Resolve smilies (before BBCode, since they're HTML comments)
-            text = self._convert_smilies(text)
+            text = self._convert_smilies(text, enable_smilies)
 
             # Step 3: Resolve attachments
             if post_id is not None:
@@ -241,7 +248,8 @@ class PhpbbBBCodeParser:
 
         return text
 
-    def _convert_xml_markup(self, text: str, post_id: int | None = None) -> str:
+    def _convert_xml_markup(self, text: str, post_id: int | None = None,
+                             enable_smilies: bool = True) -> str:
         """Convert phpBB 3.2+ XML markup format to HTML.
 
         In this format:
@@ -433,7 +441,12 @@ class PhpbbBBCodeParser:
         # Smilies stored as <E>code</E> (phpBB XML markup format) — resolved
         # against the same phpbb_smilies code → filename map as the older
         # HTML-comment format below. An unrecognized code (not in the dump's
-        # smilies table) is left as its raw text rather than dropped.
+        # smilies table) is left as its raw text rather than dropped. When
+        # this post has smilies disabled (enable_smilies=0), skip resolving
+        # them entirely — the generic "strip unknown XML tags" cleanup
+        # below removes the bare <E>/</E> wrapper either way, leaving the
+        # original raw code text visible, matching what the post actually
+        # looked like when it was written.
         def replace_xml_smiley(m):
             entry = self.smilies.get(m.group(1))
             if not entry:
@@ -443,10 +456,11 @@ class PhpbbBBCodeParser:
                 return m.group(1)
             size_attrs = f' width="{w}" height="{h}"' if w and h else ''
             return f'<img src="{self.assets_prefix}/images/smilies/{filename}" alt="{html.escape(m.group(1))}" class="smilies"{size_attrs} />'
-        text = re.sub(r'<E>([^<]*)</E>', replace_xml_smiley, text)
+        if enable_smilies:
+            text = re.sub(r'<E>([^<]*)</E>', replace_xml_smiley, text)
 
         # Smilies stored in the older HTML-comment format (mixed-era dumps)
-        text = self._convert_smilies(text)
+        text = self._convert_smilies(text, enable_smilies)
 
         # Strip any remaining unknown XML tags (e.g. custom elements)
         text = re.sub(r'<[A-Z][A-Z0-9]*(?:\s[^>]*)?>|</[A-Z][A-Z0-9]*>', '', text)
@@ -456,8 +470,11 @@ class PhpbbBBCodeParser:
 
         return text
 
-    def _convert_smilies(self, text: str) -> str:
-        """Replace phpBB smiley HTML comments with <img> tags."""
+    def _convert_smilies(self, text: str, enable_smilies: bool = True) -> str:
+        """Replace phpBB smiley HTML comments with <img> tags. enable_smilies
+        mirrors phpbb_posts.enable_smilies — False leaves the raw code text
+        (the comment's own alt) as-is rather than resolving it to an image,
+        same treatment already given a smiley whose image is missing."""
         def replace_smiley(match):
             full = match.group(0)
             # Extract the image filename from the existing img tag
@@ -469,7 +486,7 @@ class PhpbbBBCodeParser:
                 # label — falls back to "smiley" only if a dump lacks it.
                 alt_match = re.search(r'alt="([^"]*)"', full)
                 alt = html.escape(alt_match.group(1)) if alt_match else "smiley"
-                if filename in self.bad_smilies:
+                if not enable_smilies or filename in self.bad_smilies:
                     return alt
                 w, h = self.smiley_sizes_by_filename.get(filename, (0, 0))
                 size_attrs = f' width="{w}" height="{h}"' if w and h else ''

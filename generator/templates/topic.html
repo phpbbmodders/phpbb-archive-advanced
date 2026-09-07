@@ -35,7 +35,9 @@
 </div>
 {% endif %}
 
-{% if not posts %}
+{% if topic.topic_moved_id %}
+<div style="padding:12px; color:#999; font-style:italic;">Moved: <a href="{{ root }}topics/{{ topic.topic_moved_id }}.html">{{ topic.topic_title | e }}</a></div>
+{% elif not posts %}
 <div style="padding:12px; color:#999; font-style:italic;">This topic's post content is missing from the source database and could not be recovered.</div>
 {% endif %}
 
@@ -66,6 +68,8 @@
         Posts: {{ author.user_posts }}<br>
         Joined: {{ author.user_regdate | timestamp }}
       </div>
+    {% elif post.post_username %}
+      <div class="postauthor-name">{{ post.post_username | e }}</div>
     {% else %}
       <div class="postauthor-name" style="color:#999">Unknown</div>
     {% endif %}
@@ -73,7 +77,7 @@
   <div class="postbody" style="flex:1">
     <div class="post-date"><a href="#p{{ post.post_id }}" class="post-permalink">Posted: {{ post.post_time | timestamp }}</a></div>
     <div class="content">{{ post.rendered_html | safe }}</div>
-    {% if author and author.user_sig %}
+    {% if author and author.sig_html %}
     <div class="sig">{{ author.sig_html | safe }}</div>
     {% endif %}
   </div>

@@ -54,7 +54,11 @@
     <li class="row">
       <div class="forum-title">
         {% if topic.topic_type == 2 %}<span class="topic-flag topic-flag--announce">Announcement</span>{% elif topic.topic_type == 1 %}<span class="topic-flag topic-flag--sticky">Sticky</span>{% endif %}
-        <a href="{{ root }}topics/{{ topic.topic_id }}.html">{{ topic.topic_title | e }}</a>
+        {% if topic.topic_moved_id %}
+          Moved: <a href="{{ root }}topics/{{ topic.topic_moved_id }}.html">{{ topic.topic_title | e }}</a>
+        {% else %}
+          <a href="{{ root }}topics/{{ topic.topic_id }}.html">{{ topic.topic_title | e }}</a>
+        {% endif %}
         {% if topic.topic_status == 1 %}<span class="topic-flag topic-flag--locked">Locked</span>{% endif %}
         <div class="forum-desc">
           Started by
