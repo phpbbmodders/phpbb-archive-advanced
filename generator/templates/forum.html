@@ -44,6 +44,7 @@
     <span class="header-title">{{ forum.forum_name | e }}</span>
     <div class="header-cols">
       <span class="col-count">Posts</span>
+      <span class="col-count">Views</span>
     </div>
   </div>
   {% if forum.forum_desc %}<div class="forum-description">{{ forum.forum_desc | safe }}</div>{% endif %}
@@ -84,6 +85,7 @@
         </div>
       </div>
       <span class="col-count">{{ topic.topic_posts_approved }}</span>
+      <span class="col-count">{{ topic.topic_views }}</span>
     </li>
     {% endfor %}
   </ul>
