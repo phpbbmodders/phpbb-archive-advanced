@@ -40,6 +40,12 @@
     <td><strong>Posts</strong></td>
     <td>{{ user.user_posts }}</td>
   </tr>
+  {% for field in user.profile_fields %}
+  <tr>
+    <td><strong>{{ field.name | e }}</strong></td>
+    <td>{% if field.is_url %}<a href="{{ field.value | e }}">{{ field.value | e }}</a>{% else %}{{ field.value | e }}{% endif %}</td>
+  </tr>
+  {% endfor %}
   {% if user.user_sig %}
   <tr>
     <td><strong>Signature</strong></td>

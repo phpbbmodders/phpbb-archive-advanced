@@ -144,6 +144,52 @@ CREATE TABLE `phpbb_bbcodes` (
   `bbcode_tpl` mediumtext NOT NULL,
   PRIMARY KEY (`bbcode_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE `phpbb_profile_fields` (
+  `field_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
+  `field_name` varchar(255) NOT NULL DEFAULT '',
+  `field_ident` varchar(20) NOT NULL DEFAULT '',
+  `field_type` varchar(100) NOT NULL DEFAULT '',
+  `field_hide` tinyint(1) unsigned NOT NULL DEFAULT 0,
+  `field_no_view` tinyint(1) unsigned NOT NULL DEFAULT 0,
+  `field_active` tinyint(1) unsigned NOT NULL DEFAULT 0,
+  `field_order` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  PRIMARY KEY (`field_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- Real shape confirmed on phpbbmodders.net's own dump: field_name is just
+-- an internal identifier equal to field_ident, NOT the display label (see
+-- get_profile_fields()) — 11 real active/visible fields (website, location,
+-- icq, etc.) plus 2 real hidden+inactive+no-view registration-antispam
+-- fields.
+INSERT INTO `phpbb_profile_fields` VALUES (1,'phpbb_website','phpbb_website','profilefields.type.url',0,0,1,1);
+INSERT INTO `phpbb_profile_fields` VALUES (2,'realname','realname','profilefields.type.string',0,0,1,2);
+INSERT INTO `phpbb_profile_fields` VALUES (3,'antispam','antispam','profilefields.type.dropdown',1,1,0,3);
+
+CREATE TABLE `phpbb_profile_lang` (
+  `field_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `lang_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `lang_name` varchar(255) NOT NULL DEFAULT '',
+  PRIMARY KEY (`field_id`, `lang_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- field 1 mirrors a real phpBB built-in field: an ALL-CAPS internal
+-- language key, not literal text (see humanize_profile_field_label()).
+-- field 2 mirrors a real admin-added custom field: already human text,
+-- passed through unchanged.
+INSERT INTO `phpbb_profile_lang` VALUES (1,1,'WEBSITE');
+INSERT INTO `phpbb_profile_lang` VALUES (2,1,'Real name');
+INSERT INTO `phpbb_profile_lang` VALUES (3,1,'Antispam Question');
+
+CREATE TABLE `phpbb_profile_fields_data` (
+  `user_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `pf_phpbb_website` varchar(255) NOT NULL DEFAULT '',
+  `pf_realname` varchar(255) NOT NULL DEFAULT '',
+  `pf_antispam` varchar(255) NOT NULL DEFAULT '',
+  PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+INSERT INTO `phpbb_profile_fields_data` VALUES (2,'http://example.com','Test User','2');
 """
 
 
@@ -324,3 +370,38 @@ def test_get_smilies(db_path):
     smilies = db.get_smilies()
     assert len(smilies) == 1
     assert smilies[0]["code"] == ":)"
+
+
+def test_get_profile_fields_excludes_hidden_inactive_noview(db_path):
+    # The Antispam Question field (field_hide=1, field_no_view=1,
+    # field_active=0) must never be returned — a static archive has no
+    # login, so every viewer is equivalent to an anonymous visitor.
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    fields = db.get_profile_fields()
+    assert [f["field_ident"] for f in fields] == ["phpbb_website", "realname"]
+
+
+def test_get_profile_fields_uses_profile_lang_not_field_name(db_path):
+    # field_name is just an internal identifier (equal to field_ident) in
+    # real phpBB, not the display label — the real label is
+    # phpbb_profile_lang.lang_name. See get_profile_fields()'s docstring.
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    fields = db.get_profile_fields()
+    assert [f["display_label"] for f in fields] == ["WEBSITE", "Real name"]
+
+
+def test_get_all_profile_field_values(db_path):
+    # Raw value fetch is unfiltered by visibility — that filtering happens
+    # by only looking up idents from get_profile_fields()'s already-
+    # filtered list, not here (see render_users()).
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    values = db.get_all_profile_field_values()
+    assert values == {
+        2: {"phpbb_website": "http://example.com", "realname": "Test User", "antispam": "2"},
+    }
+
+
+def test_get_all_profile_field_values_omits_users_with_no_values(db_path):
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    values = db.get_all_profile_field_values()
+    assert 1 not in values

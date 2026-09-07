@@ -1098,6 +1098,29 @@ def build_edit_notice(post: dict, poster_id: int, author_username: str | None,
     }
 
 
+# phpBB's own real language file (language/en/common.php) translates this
+# one as the literal acronym "ICQ", not "Icq" — a real, confirmed exception
+# to the title-case approximation below.
+_UNCHANGED_ALL_CAPS_LABELS = {"ICQ"}
+
+
+def humanize_profile_field_label(label: str) -> str:
+    """phpBB's own built-in default profile fields (Website, ICQ, Location,
+    ...) store their profile_lang display label as an ALL-CAPS internal
+    language key ("WEBSITE", "ICQ", ...), resolved against the installed
+    language pack again at display time (see phpBB core's
+    profilefields/type/type_base.php get_field_name()) — a custom
+    admin-authored field's label is already normal text and passes through
+    unchanged. Without the actual installed language pack to resolve an
+    all-caps key precisely, title-casing it is a readable approximation,
+    not a guaranteed match to the exact wording that installation showed —
+    _UNCHANGED_ALL_CAPS_LABELS covers known exceptions (real acronyms)
+    confirmed against phpBB's own language file."""
+    if not label.isupper() or label in _UNCHANGED_ALL_CAPS_LABELS:
+        return label
+    return label.title()
+
+
 # ---------------------------------------------------------------------------
 # Forum tree builder
 # ---------------------------------------------------------------------------
@@ -1387,6 +1410,9 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
         board_hosts=board_hosts,
     )
 
+    profile_field_defs = db.get_profile_fields()
+    profile_field_values = db.get_all_profile_field_values()
+
     for user in db.get_all_users():
         rank = get_user_rank(user, ranks)
         sig_html = ""
@@ -1397,9 +1423,21 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                 post_id=None,
             )
 
+        user_values = profile_field_values.get(user["user_id"], {})
+        profile_fields = [
+            {
+                "name": humanize_profile_field_label(field["display_label"]),
+                "value": user_values[field["field_ident"]],
+                "is_url": field["field_type"] == "profilefields.type.url",
+            }
+            for field in profile_field_defs
+            if field["field_ident"] in user_values
+        ]
+
         html = tmpl.render(
             page_title=user["username"],
-            user={**user, "avatar_url": avatar_url(user, "../assets", bad_avatars, remote_avatar_exts, avatar_overrides)},
+            user={**user, "avatar_url": avatar_url(user, "../assets", bad_avatars, remote_avatar_exts, avatar_overrides),
+                  "profile_fields": profile_fields},
             rank=rank,
             sig_html=sig_html,
             assets="../assets",

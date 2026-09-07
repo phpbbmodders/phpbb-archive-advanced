@@ -20,7 +20,6 @@ Ideas not yet built, practical and speculative alike.
 
 Reported from an earlier session's own notes (numbers below as reported, not yet independently re-verified against the current dump):
 
-- **Custom profile fields (CPF)** on `user.html` — filter out `field_hide=1`/`field_active=0`/admin-only fields before rendering. Blocked on knowing what fields the real dump actually has (`phpbb_profile_fields`); the DB was mid-rebuild/locked the two times this came up before and it was never actually checked.
 - **Topic view counts** (`topic_views`, reported ~23.2M total across the board) — not rendered anywhere on forum/topic pages.
 - **Topic pagination**: flagged as deferred in an earlier session; the original scope notes (split long topics into multiple pages vs. one page per topic, page-size threshold, etc.) weren't captured anywhere, so this needs to be re-scoped from scratch with the user before implementing, not guessed at.
 

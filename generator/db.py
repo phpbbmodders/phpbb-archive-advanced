@@ -319,6 +319,50 @@ class PhpbbDatabase:
             "username",
         )
 
+    def get_profile_fields(self) -> list[dict]:
+        """Custom profile field *definitions* visible on a public profile —
+        field_active=0 (field disabled/removed by an admin), field_hide=1
+        (hidden from profile view), and field_no_view=1 (never viewable by
+        anyone but the field's own owner/an admin) are all excluded, since
+        a static archive has no login and every viewer is equivalent to an
+        anonymous visitor of the live board.
+
+        field_name (phpbb_profile_fields) is just an internal identifier
+        equal to field_ident, NOT the display label — confirmed against
+        phpBB core (acp_profile.php sets field_name = field_ident on
+        creation). The real label is phpbb_profile_lang.lang_name, joined
+        here on the lowest lang_id present (this generator has no per-
+        viewer language switching, so — like every other piece of board
+        text it handles — a single language is assumed); falls back to
+        field_name if a field somehow has no profile_lang row at all."""
+        return self._unescape_fields(
+            self._query(
+                f'SELECT f.*, COALESCE(pl.lang_name, f.field_name) AS display_label '
+                f'FROM "{self._table("profile_fields")}" f '
+                f'LEFT JOIN "{self._table("profile_lang")}" pl '
+                f'  ON pl.field_id = f.field_id '
+                f'  AND pl.lang_id = (SELECT MIN(lang_id) FROM "{self._table("profile_lang")}") '
+                f"WHERE f.field_active = 1 AND f.field_hide = 0 AND f.field_no_view = 0 "
+                f"ORDER BY f.field_order"
+            ),
+            "display_label",
+        )
+
+    def get_all_profile_field_values(self) -> dict[int, dict[str, str]]:
+        """{user_id: {field_ident: value}} for every user with at least one
+        profile field value set. phpbb_profile_fields_data stores one row
+        per user, with a pf_<field_ident> column per defined field (real
+        column names, not a generic key/value table) — confirmed against
+        phpbbmodders.net's own dump."""
+        rows = self._query(f'SELECT * FROM "{self._table("profile_fields_data")}"')
+        result: dict[int, dict[str, str]] = {}
+        for row in rows:
+            row_dict = dict(row)
+            values = {k[3:]: v for k, v in row_dict.items() if k.startswith("pf_") and v}
+            if values:
+                result[row_dict["user_id"]] = values
+        return result
+
     def get_attachments(self, post_id: int) -> list[dict]:
         # post_msg_id is shared with private messages (it holds a msg_id
         # there instead of a post_id — separate id sequences, so a msg_id

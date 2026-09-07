@@ -12,6 +12,7 @@ from generator.generate import (
     download_external_images,
     download_remote_avatars,
     find_image_urls,
+    humanize_profile_field_label,
     process_forum_descs,
     render_redirects,
 )
@@ -532,3 +533,27 @@ class TestRegenLightSkipsFetch:
                   "user_avatar": "http://example.invalid/a.png"}]
         result = download_remote_avatars(users, out, skip_fetch=True)
         assert result == {5: "png"}
+
+
+class TestHumanizeProfileFieldLabel:
+    # phpBB's own built-in default fields store an ALL-CAPS internal
+    # language key as their profile_lang label; a custom admin-added
+    # field's label is already normal text. Confirmed real on
+    # phpbbmodders.net: WEBSITE/ICQ/LOCATION/etc. (built-in) vs.
+    # "Real name"/"Pick Your choice" (custom, admin-authored).
+
+    def test_titlecases_all_caps_builtin_label(self):
+        assert humanize_profile_field_label("WEBSITE") == "Website"
+
+    def test_known_acronym_exception_stays_unchanged(self):
+        # Confirmed real: phpBB's own language/en/common.php translates
+        # this one as the literal acronym "ICQ", not the title-cased "Icq"
+        # a blind .title() would produce — caught via a real browser check
+        # on phpbbmodders.net's own dump (user 986).
+        assert humanize_profile_field_label("ICQ") == "ICQ"
+
+    def test_leaves_already_human_label_unchanged(self):
+        assert humanize_profile_field_label("Real name") == "Real name"
+
+    def test_leaves_mixed_case_label_unchanged(self):
+        assert humanize_profile_field_label("Pick Your choice") == "Pick Your choice"
