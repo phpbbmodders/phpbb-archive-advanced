@@ -32,7 +32,8 @@ class PhpbbBBCodeParser:
                  bad_attachments: set[str] | None = None,
                  external_images: dict[str, str] | None = None,
                  internal_topic_ids: set[int] | None = None,
-                 bad_smilies: set[str] | None = None):
+                 bad_smilies: set[str] | None = None,
+                 board_hosts: set[str] | None = None):
         # Map smiley code → (image filename, display width, display height).
         # phpBB stores a smiley pack's *intended* display size separately
         # from its source image files, which are often much larger (a
@@ -74,19 +75,40 @@ class PhpbbBBCodeParser:
         # not in this set (excluded, or a link to a different board
         # entirely) is left as a normal external link.
         self.internal_topic_ids = internal_topic_ids or set()
+        # Hostnames (lowercase, "www." stripped) recognized as this
+        # board's own — a real board's domain can change over its
+        # lifetime (e.g. phpbbmodders.net/.com/.org all really were this
+        # same board at different times), so this isn't just the dump's
+        # current server_name. A link with no host at all (relative, or
+        # protocol-relative) is always same-site and doesn't need this
+        # set at all. See _rewrite_internal_link.
+        self.board_hosts = {h.lower().removeprefix("www.") for h in (board_hosts or set())}
         self.topics_prefix = re.sub(r'assets$', 'topics', assets_prefix)
 
+    def _is_same_board_host(self, url: str) -> bool:
+        """True if url has no host at all (relative, or a bare
+        viewtopic.php?... reference — same-site by construction) or its
+        host matches one of self.board_hosts. A topic-id match alone
+        isn't enough to call a link internal: t=<N> is just a small
+        integer, near-guaranteed to collide with some other phpBB
+        install's own topic ids (confirmed on a real dump — thousands of
+        links to unrelated boards like phpbb.com, each with its own t=N
+        that can coincide with a topic id that also exists here)."""
+        host = urllib.parse.urlparse(url).hostname
+        return host is None or host.lower().removeprefix("www.") in self.board_hosts
+
     def _rewrite_internal_link(self, url: str) -> str:
-        """If url points at this board's own viewtopic.php for a topic that's
-        actually in this archive, rewrite it to a relative topics/N.html
-        link (preserving a #pNNNN post anchor if present) so cross-topic
-        references stay working inside the static archive. Otherwise
-        returns url with any phpBB session id stripped (see _strip_sid) —
-        including a viewtopic.php link to a topic that isn't in this
-        archive (excluded, or a different board), which stays a normal
-        external link rather than becoming a broken one."""
+        """If url points at this board's own viewtopic.php (see
+        _is_same_board_host) for a topic that's actually in this archive,
+        rewrite it to a relative topics/N.html link (preserving a #pNNNN
+        post anchor if present) so cross-topic references stay working
+        inside the static archive. Otherwise returns url with any phpBB
+        session id stripped (see _strip_sid) — including a viewtopic.php
+        link on a different board entirely, or to a topic that's been
+        excluded from this archive, which stays a normal external link
+        rather than becoming a broken or (worse) a wrong one."""
         topic_match = re.search(r'viewtopic\.php\?[^"#]*\bt=(\d+)', url)
-        if topic_match:
+        if topic_match and self._is_same_board_host(url):
             topic_id = int(topic_match.group(1))
             if topic_id in self.internal_topic_ids:
                 fragment_match = re.search(r'(#p\d+)', url)

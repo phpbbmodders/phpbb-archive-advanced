@@ -579,6 +579,18 @@ def load_ignored_hosts(path: Path) -> set[str]:
     return {str(h).lower().lstrip(".") for h in data}
 
 
+def load_board_hosts(path: Path) -> set[str]:
+    """Load a JSON array of extra hostnames (e.g. "phpbbmodders.org") this
+    board is also known to have been reachable at, in addition to the
+    dump's own phpbb_config.server_name — a real board's domain can
+    change over its lifetime, and only the current one is ever in the
+    dump. Used by internal-link rewriting to recognize a same-board
+    viewtopic.php link regardless of which of its own domains a given
+    post happened to use when it was written."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {str(h).lower() for h in data}
+
+
 def _fetch_image(url: str, timeout: int = 10, url_mirrors: dict[str, Path] | None = None,
                   ignored_hosts: set[str] | None = None) -> tuple[bytes, str] | None:
     """Resolve a URL to (raw_bytes, extension): first via any matching
@@ -1064,6 +1076,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   bad_avatars: set[str], remote_avatar_exts: dict[int, str],
                   avatar_overrides: dict[int, str], external_images: dict[str, str],
                   internal_topic_ids: set[int], bad_smilies: set[str],
+                  board_hosts: set[str],
                   site_name: str = "", announcement_html: str | None = None,
                   site_url: str | None = None) -> int:
     """Render all topic pages. Returns total post count."""
@@ -1093,6 +1106,7 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
             external_images=external_images,
             internal_topic_ids=internal_topic_ids,
             bad_smilies=bad_smilies,
+            board_hosts=board_hosts,
         )
 
         rendered_posts = []
@@ -1168,7 +1182,8 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                  custom_bbcodes: list[dict], bad_avatars: set[str],
                  remote_avatar_exts: dict[int, str], avatar_overrides: dict[int, str],
                  external_images: dict[str, str], internal_topic_ids: set[int],
-                 bad_smilies: set[str], site_name: str = "") -> None:
+                 bad_smilies: set[str], board_hosts: set[str],
+                 site_name: str = "") -> None:
     users_dir = out / "users"
     users_dir.mkdir(exist_ok=True)
     tmpl = env.get_template("user.html")
@@ -1181,6 +1196,7 @@ def render_users(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
         external_images=external_images,
         internal_topic_ids=internal_topic_ids,
         bad_smilies=bad_smilies,
+        board_hosts=board_hosts,
     )
 
     for user in db.get_all_users():
@@ -1354,7 +1370,8 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
              search: bool = False, profile_position: str = "left",
              favicon_path: str | None = None, favicon_url: str | None = None,
              logo_path: str | None = None, logo_url: str | None = None,
-             logo_natural_size: bool = False, theme: str = "light") -> None:
+             logo_natural_size: bool = False, theme: str = "light",
+             board_hosts_path: str | None = None) -> None:
     out = Path(output_dir)
     dump = Path(dump_dir)
 
@@ -1490,6 +1507,14 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     # PhpbbBBCodeParser._rewrite_internal_link().
     internal_topic_ids = {t["topic_id"] for f in forums for t in db.get_topics(f["forum_id"])}
 
+    # Hostnames recognized as this board's own, for internal-link
+    # rewriting (see PhpbbBBCodeParser._is_same_board_host) — the dump's
+    # own server_name plus any --board-hosts extras (a board's domain can
+    # change over its lifetime; only the current one is ever in the dump).
+    board_hosts = {h for h in (db.get_config("server_name"),) if h}
+    if board_hosts_path:
+        board_hosts |= load_board_hosts(Path(board_hosts_path))
+
     # --- Shared parser (used for forum descs and user sigs as well as posts) ---
     shared_parser = PhpbbBBCodeParser(
         smilies=smilies,
@@ -1499,6 +1524,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
         external_images=external_images,
         internal_topic_ids=internal_topic_ids,
         bad_smilies=bad_smilies,
+        board_hosts=board_hosts,
     )
 
     # Enrich forums with the topic_id of their last post (for linking)
@@ -1522,9 +1548,9 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
 
     site_url = sitemap_url if not sitemap_url or sitemap_url.endswith("/") else sitemap_url + "/"
 
-    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, site_name=site_name, announcement_html=announcement_html, site_url=site_url)
+    total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name, announcement_html=announcement_html, site_url=site_url)
     render_forums(env, out, db, users, shared_parser, forums, site_name=site_name, announcement_html=announcement_html)
-    render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, site_name=site_name)
+    render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name)
     render_index(env, out, forum_tree or [], total_posts, site_name=site_name, announcement_html=announcement_html)
 
     if site_url:
@@ -1796,6 +1822,18 @@ def main() -> None:
                          help="Which built-in neutral palette to use — light (default) or dark. "
                               "Has no effect when --style-css is given, since a custom stylesheet "
                               "is its own fixed palette.")
+    parser.add_argument("--board-hosts", metavar="FILE",
+                         help="JSON array of extra hostnames this board is also known to have "
+                              "been reachable at (e.g. a former domain), in addition to the "
+                              "dump's own phpbb_config.server_name. Used to recognize a post's "
+                              "own viewtopic.php link back to this board so it can be rewritten "
+                              "to a relative in-archive link — without this, only a link that "
+                              "happens to use the domain currently in the dump is recognized, so "
+                              "a board that changed domains over its lifetime needs its other "
+                              "domains listed here. A topic id alone is not enough to tell: it's "
+                              "just a small integer, and two unrelated phpBB installs (or the "
+                              "same board on an old and current domain) can easily reuse the same "
+                              "one for a completely different topic.")
     args = parser.parse_args()
     if args.missing_avatars:
         find_missing_avatars(args.dump, args.output, args.avatar_overrides)
@@ -1810,7 +1848,7 @@ def main() -> None:
                  args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
                  args.announcement, args.sitemap_url, args.search, args.profile_position,
                  args.favicon, args.favicon_url, args.logo, args.logo_url,
-                 args.logo_natural_size, args.theme)
+                 args.logo_natural_size, args.theme, args.board_hosts)
 
 
 if __name__ == "__main__":

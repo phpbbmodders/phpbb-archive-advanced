@@ -12,8 +12,12 @@ set -Eeuo pipefail
 # (config/announcement.txt) — empty by default, so nothing renders
 # until it's filled in — a sitemap.xml/robots.txt for
 # https://phpbbmodders.net/, full-text search (search.html, via
-# Pagefind), and the board's real logo/favicon fetched live from
-# phpbbmodders.com/.net (neither lives anywhere in the SQL dump).
+# Pagefind), the board's real logo/favicon fetched live from
+# phpbbmodders.com/.net (neither lives anywhere in the SQL dump), and
+# recognizing this board's own domains (config/board_hosts.json — the
+# board has used .net/.com/.org at different times) so a post's own
+# viewtopic.php links back to itself get rewritten into the archive
+# regardless of which domain it used when it was written.
 # --incremental keeps previously-downloaded attachments/avatars/external
 # images across runs instead of re-fetching everything.
 #
@@ -42,4 +46,5 @@ fi
     --search \
     --logo-url https://www.phpbbmodders.com/modders-cog.gif \
     --favicon-url https://phpbbmodders.net/favicon.ico \
+    --board-hosts config/board_hosts.json \
     "${extra_args[@]}"

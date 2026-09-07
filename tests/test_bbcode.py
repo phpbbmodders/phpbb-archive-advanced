@@ -149,3 +149,43 @@ class TestNesting:
     def test_plain_text_passthrough(self, parser):
         result = parser.convert("just some text", uid="")
         assert result == "just some text"
+
+
+class TestInternalLinkRewriting:
+    # A topic id alone is not enough to call a link "this board's own" —
+    # it's just a small integer, near-guaranteed to collide with some
+    # unrelated phpBB install's own topic ids. Confirmed on a real dump:
+    # thousands of links to other real boards (phpbb.com, rmcgirr83.org,
+    # etc.) whose own t=N happens to match a topic id that also exists
+    # here — see phpbb-archive security review, finding 11.
+
+    @pytest.fixture
+    def parser(self):
+        return PhpbbBBCodeParser(
+            smilies=[], attachments={}, assets_prefix="../assets",
+            internal_topic_ids={42}, board_hosts={"ourboard.example"},
+        )
+
+    def test_rewrites_link_on_own_host(self, parser):
+        result = parser.convert(
+            "[url=https://ourboard.example/viewtopic.php?t=42]click[/url]", uid="")
+        assert 'href="../topics/42.html"' in result
+
+    def test_rewrites_relative_link_with_no_host(self, parser):
+        result = parser.convert(
+            "[url=viewtopic.php?t=42]click[/url]", uid="")
+        assert 'href="../topics/42.html"' in result
+
+    def test_does_not_rewrite_same_topic_id_on_different_host(self, parser):
+        # A different board's own topic 42 is not our topic 42.
+        result = parser.convert(
+            "[url=https://unrelated-board.example/viewtopic.php?t=42]click[/url]", uid="")
+        assert 'href="../topics/42.html"' not in result
+        assert "unrelated-board.example" in result
+
+    def test_does_not_rewrite_own_host_unknown_topic_id(self, parser):
+        # Our own host, but a topic id that isn't in this archive
+        # (excluded, or simply never existed) — left as a normal link.
+        result = parser.convert(
+            "[url=https://ourboard.example/viewtopic.php?t=999]click[/url]", uid="")
+        assert 'href="../topics/999.html"' not in result
