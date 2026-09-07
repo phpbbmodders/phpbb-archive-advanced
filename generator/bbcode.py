@@ -268,6 +268,15 @@ class PhpbbBBCodeParser:
         text = re.sub(r'^<[rt]>', '', text.lstrip())
         text = re.sub(r'</[rt]>$', '', text.rstrip())
 
+        # Bracket-syntax [code]...[/code] that never got converted to the
+        # XML <CODE> tag (a real, observed migration gap: a post whose
+        # overall content is XML-wrapped can still carry old-style
+        # unconverted bracket text inside it) — stashed before any
+        # semantic tag below can reach into it, same as the old-BBCode
+        # path. Without this it was rendered as literal, un-boxed
+        # "[code]...[/code]" text sitting in the middle of the post.
+        text, code_blocks = self._stash_code_blocks(text)
+
         # Semantic block elements → HTML
         text = re.sub(r'<B>', '<strong>', text)
         text = re.sub(r'</B>', '</strong>', text)
@@ -412,6 +421,9 @@ class PhpbbBBCodeParser:
         # Strip any remaining unknown XML tags (e.g. custom elements)
         text = re.sub(r'<[A-Z][A-Z0-9]*(?:\s[^>]*)?>|</[A-Z][A-Z0-9]*>', '', text)
 
+        # Restore code blocks last (see the stash earlier in this method).
+        text = self._restore_code_blocks(text, code_blocks)
+
         return text
 
     def _convert_smilies(self, text: str) -> str:
@@ -478,8 +490,39 @@ class PhpbbBBCodeParser:
         )
         return text
 
+    @staticmethod
+    def _stash_code_blocks(text: str) -> tuple[str, list[str]]:
+        """Extract [code]...[/code] blocks (bracket syntax — the older
+        BBCode form, and also how a code block can show up even inside
+        XML-format content that never got fully migrated) into a list,
+        replacing each with a unique placeholder. Must run before any
+        other BBCode/XML substitution: those would otherwise also fire
+        *inside* a code block's own content — confirmed:
+        [code][b]literal[/b][/code] rendered as real bold text instead of
+        showing the BBCode example as it was actually written, silently
+        changing an archived example into a different one. See
+        _restore_code_blocks for the other half."""
+        code_blocks: list[str] = []
+
+        def _stash(m):
+            code_blocks.append(m.group(1))
+            return f'\x00CODEBLOCK{len(code_blocks) - 1}\x00'
+        return re.sub(r'\[code\](.*?)\[/code\]', _stash, text, flags=re.DOTALL), code_blocks
+
+    @staticmethod
+    def _restore_code_blocks(text: str, code_blocks: list[str]) -> str:
+        """Restore placeholders from _stash_code_blocks, verbatim and
+        HTML-escaped — a real code/HTML/PHP example can easily contain a
+        literal < > or &, which would otherwise be interpreted as actual
+        markup instead of shown as the text it is."""
+        def _restore(m):
+            return f'<div class="codebox"><pre><code>{html.escape(code_blocks[int(m.group(1))])}</code></pre></div>'
+        return re.sub(r'\x00CODEBLOCK(\d+)\x00', _restore, text)
+
     def _convert_bbcode(self, text: str) -> str:
         """Convert standard BBCode tags to HTML."""
+        text, code_blocks = self._stash_code_blocks(text)
+
         # Bold
         text = re.sub(r'\[b\](.*?)\[/b\]', r'<strong>\1</strong>', text, flags=re.DOTALL)
         # Italic
@@ -525,13 +568,6 @@ class PhpbbBBCodeParser:
             text, flags=re.DOTALL,
         )
 
-        # Code
-        text = re.sub(
-            r'\[code\](.*?)\[/code\]',
-            r'<div class="codebox"><pre><code>\1</code></pre></div>',
-            text, flags=re.DOTALL,
-        )
-
         # Color
         text = re.sub(
             r'\[color=([^\]]+)\](.*?)\[/color\]',
@@ -560,6 +596,9 @@ class PhpbbBBCodeParser:
         # Horizontal rule — phpBB stores as [hr:uid][/hr:uid], so consume both
         text = re.sub(r'\[hr\]', '<hr>', text)
         text = text.replace('[/hr]', '')
+
+        # Restore code blocks last (see the stash at the top of this method).
+        text = self._restore_code_blocks(text, code_blocks)
 
         return text
 

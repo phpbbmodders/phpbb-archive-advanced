@@ -74,6 +74,23 @@ class TestBasicTags:
         assert "<code" in result or "<pre" in result
         assert "x = 1" in result
 
+    def test_code_preserves_literal_bbcode_example(self, parser):
+        # Formatting substitutions used to run before [code] was
+        # protected, so a literal BBCode example inside a real code block
+        # silently rendered as actual formatting instead of showing the
+        # example as written — see phpbb-archive security review,
+        # finding 13.
+        result = parser.convert("[code][b]literal[/b][/code]", uid="")
+        assert "[b]literal[/b]" in result
+        assert "<strong>" not in result
+
+    def test_code_escapes_html_content(self, parser):
+        # A real code/HTML example inside [code] must be shown as text,
+        # not interpreted as actual markup.
+        result = parser.convert('[code]<div class="foo">html</div>[/code]', uid="")
+        assert "&lt;div class=&quot;foo&quot;&gt;html&lt;/div&gt;" in result
+        assert '<div class="foo">' not in result
+
     def test_color(self, parser):
         result = parser.convert("[color=#FF0000]red[/color]", uid="")
         assert "color" in result
@@ -97,6 +114,27 @@ class TestSmilies:
         result = parser.convert('<!-- s:( --><img src="{SMILIES_PATH}/icon_sad.gif" /><!-- s:( -->', uid="")
         # Should still produce an img tag with best-effort path
         assert "<img" in result
+
+
+class TestXmlCodeBlocks:
+    # A post's overall content can be XML-wrapped (<r>/<t>) while still
+    # carrying old-style bracket-syntax [code]...[/code] inside it,
+    # unconverted to the XML <CODE> tag — a real migration gap found on a
+    # real archive (a real post literally rendered the raw
+    # "[code]...[/code]" bracket text sitting in the paragraph, with no
+    # code-box styling at all). See phpbb-archive security review,
+    # finding 13.
+
+    def test_bracket_code_inside_xml_wrapper_gets_boxed(self, parser):
+        result = parser.convert("<t>before [code]x = 1[/code] after</t>", uid="")
+        assert '<div class="codebox">' in result
+        assert "[code]" not in result
+        assert "x = 1" in result
+
+    def test_bracket_code_inside_xml_wrapper_protected_from_formatting(self, parser):
+        result = parser.convert("<t>[code][b]literal[/b][/code]</t>", uid="")
+        assert "[b]literal[/b]" in result
+        assert "<strong>" not in result
 
 
 class TestHorizontalRule:
