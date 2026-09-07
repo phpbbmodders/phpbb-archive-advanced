@@ -103,6 +103,7 @@ ul.topiclist li.row .forum-desc { font-size: 0.85em; color: #9099A6; font-weight
 }
 .topic-flag--sticky { background: #4A5A70; color: #fff; }
 .topic-flag--announce { background: #B0203A; color: #fff; }
+.topic-flag--global { background: #6A3A8A; color: #fff; }
 .topic-flag--locked { background: #666; color: #fff; }
 ul.topiclist li.row .col-count { min-width: 60px; text-align: right; color: #9099A6; font-size: 0.9em; }
 ul.topiclist li.row .col-lastpost { min-width: 180px; max-width: 180px; font-size: 0.85em; color: #9099A6; }

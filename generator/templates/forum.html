@@ -53,7 +53,7 @@
     {% for topic in topics %}
     <li class="row">
       <div class="forum-title">
-        {% if topic.topic_type == 2 %}<span class="topic-flag topic-flag--announce">Announcement</span>{% elif topic.topic_type == 1 %}<span class="topic-flag topic-flag--sticky">Sticky</span>{% endif %}
+        {% if topic.topic_type == 3 %}<span class="topic-flag topic-flag--global">Global Announcement</span>{% elif topic.topic_type == 2 %}<span class="topic-flag topic-flag--announce">Announcement</span>{% elif topic.topic_type == 1 %}<span class="topic-flag topic-flag--sticky">Sticky</span>{% endif %}
         {% if topic.topic_moved_id %}
           Moved: <a href="{{ root }}topics/{{ topic.topic_moved_id }}.html">{{ topic.topic_title | e }}</a>
         {% else %}

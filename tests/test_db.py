@@ -21,6 +21,8 @@ CREATE TABLE `phpbb_forums` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 INSERT INTO `phpbb_forums` VALUES (1,'General','General discussion',5,20,100,1700000000,'testuser',0,1,2);
+INSERT INTO `phpbb_forums` VALUES (2,'Ordering Forum','Sticky/announce ordering fixture',3,3,200,3000,'testuser',0,3,4);
+INSERT INTO `phpbb_forums` VALUES (3,'Third Forum','Global announcement home forum',1,1,300,2000,'testuser',0,5,6);
 
 CREATE TABLE `phpbb_users` (
   `user_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
@@ -50,12 +52,24 @@ CREATE TABLE `phpbb_topics` (
   `topic_status` tinyint(3) NOT NULL DEFAULT 0,
   `topic_visibility` tinyint(3) NOT NULL DEFAULT 1,
   `poll_title` varchar(255) NOT NULL DEFAULT '',
+  `topic_type` tinyint(3) NOT NULL DEFAULT 0,
   PRIMARY KEY (`topic_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
-INSERT INTO `phpbb_topics` VALUES (1,1,'Test Topic',2,1600000000,50,3,3,1700000000,'testuser',0,1,'');
-INSERT INTO `phpbb_topics` VALUES (2,1,'Hidden Topic',2,1600000000,0,0,0,1700000000,'testuser',0,3,'');
-INSERT INTO `phpbb_topics` VALUES (3,1,'Poll Topic',2,1600000000,0,1,0,1700000000,'testuser',0,1,'Pick one');
+INSERT INTO `phpbb_topics` VALUES (1,1,'Test Topic',2,1600000000,50,3,3,1700000000,'testuser',0,1,'',0);
+INSERT INTO `phpbb_topics` VALUES (2,1,'Hidden Topic',2,1600000000,0,0,0,1700000000,'testuser',0,3,'',0);
+INSERT INTO `phpbb_topics` VALUES (3,1,'Poll Topic',2,1600000000,0,1,0,1700000000,'testuser',0,1,'Pick one',0);
+
+-- Sticky(1)/announce(2)/normal(0) ordering fixture: last_post_time alone
+-- would sort these Normal > Announce > Sticky, but tier priority must
+-- place Announce above Sticky above Normal regardless.
+INSERT INTO `phpbb_topics` VALUES (10,2,'Normal Topic',2,1600000000,0,1,0,3000,'testuser',0,1,'',0);
+INSERT INTO `phpbb_topics` VALUES (11,2,'Sticky Topic',2,1600000000,0,1,0,1000,'testuser',0,1,'',1);
+INSERT INTO `phpbb_topics` VALUES (12,2,'Announce Topic',2,1600000000,0,1,0,2000,'testuser',0,1,'',2);
+
+-- Global announcement (topic_type=3) fixture — physically posted in forum
+-- 3, but get_global_announcements() must return it board-wide.
+INSERT INTO `phpbb_topics` VALUES (20,3,'Global Announcement',2,1600000000,0,1,0,2500,'testuser',0,1,'',3);
 
 CREATE TABLE `phpbb_poll_options` (
   `poll_option_id` tinyint(4) NOT NULL DEFAULT 0,
@@ -144,7 +158,7 @@ def db_path(tmp_path):
 def test_import_creates_tables(db_path):
     db = PhpbbDatabase(db_path, table_prefix="phpbb_")
     forums = db.get_forums()
-    assert len(forums) == 1
+    assert len(forums) == 3
     assert forums[0]["forum_name"] == "General"
 
 
@@ -195,6 +209,33 @@ def test_get_topics_excludes_hidden(db_path):
     db = PhpbbDatabase(db_path, table_prefix="phpbb_")
     topics = db.get_topics(forum_id=1)
     assert all(t["topic_id"] != 2 for t in topics)
+
+
+def test_get_topics_pins_announcements_above_stickies_above_normal(db_path):
+    # forum_id=2's fixture topics have last_post_time in the OPPOSITE order
+    # (Normal newest, Announce middle, Sticky oldest) so this only passes if
+    # topic_type tier actually overrides last_post_time, not merely
+    # coincides with it.
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    topics = db.get_topics(forum_id=2)
+    assert [t["topic_title"] for t in topics] == [
+        "Announce Topic",
+        "Sticky Topic",
+        "Normal Topic",
+    ]
+
+
+def test_get_global_announcements(db_path):
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    globals_ = db.get_global_announcements()
+    assert [t["topic_title"] for t in globals_] == ["Global Announcement"]
+    assert globals_[0]["forum_id"] == 3
+
+
+def test_get_global_announcements_respects_exclusion(db_path):
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    globals_ = db.get_global_announcements(exclude_forum_ids={3})
+    assert globals_ == []
 
 
 def test_get_posts(db_path):

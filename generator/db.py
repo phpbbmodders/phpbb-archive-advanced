@@ -245,14 +245,43 @@ class PhpbbDatabase:
         # condition phpBB itself applies before showing a topic to an
         # anonymous/non-moderator visitor. 0/2/3 (unapproved, soft-deleted,
         # needs-reapproval) are moderation states, not public content.
+        #
+        # topic_type: phpBB pins announcements (2) and global announcements
+        # (3, see get_global_announcements()) above stickies (1), which sort
+        # above ordinary topics (0) — matching phpBB's own real forum-view
+        # ordering. Within each tier, the forum's normal order (last-post-
+        # time descending) is unchanged.
         return self._unescape_fields(
             self._query(
                 f'SELECT * FROM "{self._table("topics")}" WHERE forum_id = ? AND topic_visibility = 1 '
-                f"ORDER BY topic_last_post_time DESC",
+                f"ORDER BY CASE topic_type WHEN 2 THEN 0 WHEN 3 THEN 0 WHEN 1 THEN 1 ELSE 2 END, "
+                f"topic_last_post_time DESC",
                 (forum_id,),
             ),
             "topic_title",
         )
+
+    def get_global_announcements(self, exclude_forum_ids: set[int] | None = None) -> list[dict]:
+        """Board-wide announcements (topic_type = 3, phpBB's TOPIC_GLOBAL) —
+        pinned above every forum's own topic listing, not just the forum
+        they were physically posted in, matching phpBB's own real behavior.
+        Callers merge this into each forum's own get_topics() result for
+        display; it's intentionally not folded into get_topics() itself so
+        a global topic's own page is still generated exactly once, from its
+        actual forum_id."""
+        if exclude_forum_ids:
+            placeholders = ",".join("?" * len(exclude_forum_ids))
+            rows = self._query(
+                f'SELECT * FROM "{self._table("topics")}" WHERE topic_type = 3 AND topic_visibility = 1 '
+                f"AND forum_id NOT IN ({placeholders}) ORDER BY topic_last_post_time DESC",
+                tuple(exclude_forum_ids),
+            )
+        else:
+            rows = self._query(
+                f'SELECT * FROM "{self._table("topics")}" WHERE topic_type = 3 AND topic_visibility = 1 '
+                f"ORDER BY topic_last_post_time DESC",
+            )
+        return self._unescape_fields(rows, "topic_title")
 
     def get_post_topic_id(self, post_id: int) -> int | None:
         rows = self._query(

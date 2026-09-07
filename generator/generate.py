@@ -1121,7 +1121,8 @@ def render_index(env: jinja2.Environment, out: Path, forum_tree: list[dict],
 def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   users: dict[int, dict], parser: PhpbbBBCodeParser,
                   forums: list[dict], site_name: str = "",
-                  announcement_html: str | None = None) -> None:
+                  announcement_html: str | None = None,
+                  exclude_forum_ids: set[int] | None = None) -> None:
     forums_dir = out / "forums"
     forums_dir.mkdir(exist_ok=True)
     tmpl = env.get_template("forum.html")
@@ -1129,6 +1130,21 @@ def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
     children_by_parent: dict[int, list[dict]] = {}
     for f in forums:
         children_by_parent.setdefault(f["parent_id"], []).append(f)
+
+    # Board-wide announcements (topic_type = 3) belong above every forum's
+    # own listing, not just the forum they were physically posted in — see
+    # db.get_global_announcements(). Fetched once and merged per-forum below
+    # rather than folded into get_topics() itself, so each global topic's
+    # own page (rendered from its actual forum via render_topics()) isn't
+    # duplicated.
+    global_announcements = db.get_global_announcements(exclude_forum_ids)
+
+    def _topic_sort_tier(topic_type: int) -> int:
+        if topic_type in (2, 3):
+            return 0
+        if topic_type == 1:
+            return 1
+        return 2
 
     # Categories (forum_type 0) get a page too — no topics of their own
     # (phpBB doesn't allow posting directly into a category), but a page
@@ -1140,6 +1156,12 @@ def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
         topics = []
         if not is_category:
             topics = db.get_topics(forum["forum_id"])
+            others_global = [g for g in global_announcements if g["forum_id"] != forum["forum_id"]]
+            if others_global:
+                topics = sorted(
+                    topics + others_global,
+                    key=lambda t: (_topic_sort_tier(t.get("topic_type", 0)), -t["topic_last_post_time"]),
+                )
             # Annotate each topic with its starter's username for the template
             for t in topics:
                 poster = users.get(t.get("topic_poster", 0))
@@ -1830,7 +1852,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     site_url = sitemap_url if not sitemap_url or sitemap_url.endswith("/") else sitemap_url + "/"
 
     total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name, announcement_html=announcement_html_nested, site_url=site_url)
-    render_forums(env, out, db, users, shared_parser_nested, forums, site_name=site_name, announcement_html=announcement_html_nested)
+    render_forums(env, out, db, users, shared_parser_nested, forums, site_name=site_name, announcement_html=announcement_html_nested, exclude_forum_ids=excluded_forum_ids)
     render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name)
     render_index(env, out, forum_tree or [], total_posts, site_name=site_name, announcement_html=announcement_html)
 
