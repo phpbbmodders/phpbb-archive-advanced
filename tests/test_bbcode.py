@@ -56,9 +56,25 @@ class TestBasicTags:
         assert "click" in result
 
     def test_image(self, parser):
+        # External images are downloaded and cached locally (see
+        # download_external_images() in generate.py) rather than hotlinked
+        # — the parser only renders <img> for a URL already present in
+        # external_images (simulating a successful prior download); an
+        # unresolved URL is dropped, not hotlinked to the original remote
+        # address (see test_image_not_yet_cached_is_dropped below). This
+        # test predates that architecture and asserted the old hotlinked
+        # src; updated to match current, intentional behavior.
+        parser.external_images["https://example.com/pic.png"] = "abc123.png"
         result = parser.convert("[img]https://example.com/pic.png[/img]", uid="")
         assert '<img' in result
-        assert 'src="https://example.com/pic.png"' in result
+        assert 'src="../assets/external/abc123.png"' in result
+
+    def test_image_not_yet_cached_is_dropped(self, parser):
+        # A URL with no cached local copy (download failed, or hasn't run
+        # yet) is dropped entirely rather than left as a broken hotlink to
+        # the original remote address.
+        result = parser.convert("[img]https://example.com/pic.png[/img]", uid="")
+        assert result == ""
 
     def test_quote_with_author(self, parser):
         result = parser.convert('[quote="Alice"]hello[/quote]', uid="")
