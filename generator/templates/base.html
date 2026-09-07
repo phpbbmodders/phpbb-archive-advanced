@@ -13,7 +13,7 @@
 
 <div id="page-header">
   <div class="header-titlebar">
-    {% if logo_ext %}<a href="{{ root }}index.html" class="no-bracket"><img src="{{ root }}assets/logo.{{ logo_ext }}" alt="" class="site-logo{% if logo_natural_size or logo_width %} site-logo--natural{% endif %}"{% if logo_width %} width="{{ logo_width }}" height="{{ logo_height }}"{% endif %}></a>{% endif %}
+    {% if logo_ext %}<a href="{{ root }}index.html" class="no-bracket"><img src="{{ root }}assets/logo.{{ logo_ext }}" alt="" class="site-logo{% if logo_natural_size or logo_width %} site-logo--natural{% endif %}"{% if logo_width %} width="{{ logo_width }}" height="{{ logo_height }}" style="width: {{ logo_width }}px; height: {{ logo_height }}px;"{% endif %}></a>{% endif %}
     <div class="header-titletext">
       <h1><a class="no-bracket" href="{{ root }}index.html">{{ site_name }}</a></h1>
       {% if site_desc %}<p class="site-tagline">{{ site_desc | e }}</p>{% endif %}
