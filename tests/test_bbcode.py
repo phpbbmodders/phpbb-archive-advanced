@@ -136,6 +136,23 @@ class TestXmlCodeBlocks:
         assert "[b]literal[/b]" in result
         assert "<strong>" not in result
 
+    def test_br_inside_code_block_renders_as_real_line_break(self, parser):
+        # A <br/> landing inside [code] comes from phpBB's own line-break
+        # normalization (it runs before the block is stashed), not from
+        # code content — confirmed on a real archive: a real post's
+        # <br/>-separated error dump inside [code] should read as
+        # separate lines, not literal "&lt;br&gt;" text.
+        result = parser.convert("<t>[code]line one<br/>line two[/code]</t>", uid="")
+        assert "<br>" in result
+        assert "&lt;br&gt;" not in result
+
+    def test_real_html_inside_code_block_still_escapes(self, parser):
+        # Only the phpBB <br/> marker gets this treatment — a genuine
+        # HTML/code example must still be shown as text, not markup.
+        result = parser.convert('<t>[code]<div class="x">html</div>[/code]</t>', uid="")
+        assert "&lt;div" in result
+        assert '<div class="x">' not in result
+
 
 class TestHorizontalRule:
     def test_hr_bbcode(self, parser):

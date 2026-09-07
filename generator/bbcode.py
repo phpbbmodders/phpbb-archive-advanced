@@ -514,9 +514,15 @@ class PhpbbBBCodeParser:
         """Restore placeholders from _stash_code_blocks, verbatim and
         HTML-escaped — a real code/HTML/PHP example can easily contain a
         literal < > or &, which would otherwise be interpreted as actual
-        markup instead of shown as the text it is."""
+        markup instead of shown as the text it is. A literal <br> is the
+        one exception: the earlier <br/> normalization in
+        _convert_xml_markup runs before a [code] block is stashed, so a
+        <br> landing inside one is phpBB's own line-break marker, not
+        code content — restored as a real line break (<pre> already
+        preserves it visually) rather than shown as escaped text."""
         def _restore(m):
-            return f'<div class="codebox"><pre><code>{html.escape(code_blocks[int(m.group(1))])}</code></pre></div>'
+            escaped = html.escape(code_blocks[int(m.group(1))]).replace('&lt;br&gt;', '<br>')
+            return f'<div class="codebox"><pre><code>{escaped}</code></pre></div>'
         return re.sub(r'\x00CODEBLOCK(\d+)\x00', _restore, text)
 
     def _convert_bbcode(self, text: str) -> str:
