@@ -343,29 +343,83 @@ def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: s
                 removed += 1
         if removed:
             logger.info("Removed %d previously-copied attachment(s) now excluded", removed)
+        # dump/files/ also holds phpBB's own auto-generated
+        # thumb_<attach_id>_<physical_filename> companion files for image
+        # attachments — a separate concept from the attachment itself,
+        # never referenced by its own name in phpbb_attachments (and this
+        # archive never links to a thumbnail; it always serves the full
+        # image directly). Not in physical_to_real means it isn't a real
+        # attachment row at all — confirmed real: 1,498 such files sitting
+        # in this dump, a meaningful fraction of them already
+        # corrupted/truncated on top of being unreferenced dead weight.
+        # Same --incremental blind spot as the exclusion cleanup above: a
+        # prior run's already-copied junk is never revisited on its own.
+        stale_junk = 0
+        if dest.is_dir():
+            for entry in dest.iterdir():
+                if entry.name in (physical_to_real or {}):
+                    continue
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+                stale_junk += 1
+        if stale_junk:
+            logger.info("Removed %d previously-copied non-attachment file(s) (e.g. phpBB's own thumbnails)", stale_junk)
+        # A physical_filename can have more than one on-disk copy across
+        # the stray nesting levels (e.g. a copy under dump/files/ and
+        # another, separately collected, under dump/files/files/) — os.walk
+        # visits shallower directories first, so collect every copy before
+        # choosing rather than committing to whichever happens to be found
+        # first. Some of these turn out to have been collected at
+        # different times from different sources and don't share the same
+        # corruption; picking blindly could mean using a broken copy when
+        # a good one of the very same file was sitting one level deeper.
+        candidates: dict[str, list[Path]] = {}
         for dirpath, _dirnames, filenames in os.walk(files_src):
             for name in filenames:
                 if excluded_physical_filenames and name in excluded_physical_filenames:
                     continue
-                real = (physical_to_real or {}).get(name)
-                if real:
-                    # real_filename comes straight from the dump's own
-                    # database — an attacker-crafted or corrupted dump
-                    # could put path separators (e.g. "../../etc/x") in
-                    # it, which a bare Path join would honor literally at
-                    # copy time, writing outside assets/attachments/
-                    # entirely. Reduce to a bare basename; a filename that
-                    # collapses to nothing (".", "..", or empty) falls
-                    # back to the flat physical-name layout below.
-                    real = os.path.basename(real)
-                    if real in ("", ".", ".."):
-                        real = None
-                target = dest / name / real if real else dest / name
-                if target.exists():
+                if name not in (physical_to_real or {}):
                     continue
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(Path(dirpath) / name, target)
-                copied += 1
+                candidates.setdefault(name, []).append(Path(dirpath) / name)
+
+        recovered_from_nesting = 0
+        for name, paths in candidates.items():
+            real = (physical_to_real or {}).get(name)
+            if real:
+                # real_filename comes straight from the dump's own
+                # database — an attacker-crafted or corrupted dump could
+                # put path separators (e.g. "../../etc/x") in it, which a
+                # bare Path join would honor literally at copy time,
+                # writing outside assets/attachments/ entirely. Reduce to
+                # a bare basename; a filename that collapses to nothing
+                # (".", "..", or empty) falls back to the flat
+                # physical-name layout below.
+                real = os.path.basename(real)
+                if real in ("", ".", ".."):
+                    real = None
+            target = dest / name / real if real else dest / name
+            if target.exists():
+                continue
+            # Prefer the shallowest copy (paths is already in that order);
+            # fall back to the first later copy that actually validates
+            # for its type (see _attachment_is_valid) if the shallow one
+            # doesn't. A real_filename is required to check type at all —
+            # without one there's nothing to compare against, so this
+            # just keeps the original shallowest-copy behavior.
+            chosen = paths[0]
+            if real and len(paths) > 1 and not _attachment_is_valid(chosen, real):
+                for alt in paths[1:]:
+                    if _attachment_is_valid(alt, real):
+                        chosen = alt
+                        recovered_from_nesting += 1
+                        break
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(chosen, target)
+            copied += 1
+        if recovered_from_nesting:
+            logger.info("Recovered %d attachment(s) using a valid copy from a deeper nested duplicate", recovered_from_nesting)
         logger.info("Copied attachments (%d files)", copied)
 
 

@@ -5,6 +5,7 @@ from generator.generate import (
     _apache_redirects,
     _nginx_redirects,
     clean_disabled_feature_output,
+    copy_assets,
     find_image_urls,
     render_redirects,
 )
@@ -243,3 +244,100 @@ class TestCleanDisabledFeatureOutput:
 
     def test_missing_files_are_not_an_error(self, tmp_path):
         clean_disabled_feature_output(tmp_path, search=False, sitemap_url=None, redirect_format=None)
+
+
+class TestCopyAssetsAttachmentJunkFiltering:
+    # dump/files/ also holds phpBB's own auto-generated
+    # thumb_<attach_id>_<physical_filename> companion files for image
+    # attachments — never referenced by their own name in
+    # phpbb_attachments, and this archive never links to a thumbnail (it
+    # always serves the full image directly). Confirmed real on
+    # phpbbmodders.net's own dump: 1,498 such files, a meaningful
+    # fraction already corrupted/truncated on top of being unreferenced
+    # dead weight sitting in the generated output.
+
+    def _dump_dir(self, tmp_path):
+        d = tmp_path / "dump"
+        (d / "files").mkdir(parents=True)
+        return d
+
+    def test_real_attachment_is_copied(self, tmp_path):
+        dump = self._dump_dir(tmp_path)
+        (dump / "files" / "abc123").write_bytes(b"fake image data")
+        out = tmp_path / "output"
+        copy_assets(dump, out, physical_to_real={"abc123": "photo.png"})
+        assert (out / "assets" / "attachments" / "abc123" / "photo.png").read_bytes() == b"fake image data"
+
+    def test_phpbb_thumbnail_file_is_not_copied(self, tmp_path):
+        dump = self._dump_dir(tmp_path)
+        (dump / "files" / "abc123").write_bytes(b"fake image data")
+        (dump / "files" / "thumb_1_abc123").write_bytes(b"fake thumbnail data")
+        out = tmp_path / "output"
+        copy_assets(dump, out, physical_to_real={"abc123": "photo.png"})
+        attachments_dir = out / "assets" / "attachments"
+        assert (attachments_dir / "abc123" / "photo.png").exists()
+        assert not (attachments_dir / "thumb_1_abc123").exists()
+
+    def test_stale_junk_from_a_prior_incremental_run_is_removed(self, tmp_path):
+        # --incremental only ever adds attachment files across runs and
+        # never revisits ones already on disk — a junk file copied by an
+        # older version of this code (before this fix) would otherwise
+        # sit there indefinitely.
+        dump = self._dump_dir(tmp_path)
+        (dump / "files" / "abc123").write_bytes(b"fake image data")
+        out = tmp_path / "output"
+        attachments_dir = out / "assets" / "attachments"
+        attachments_dir.mkdir(parents=True)
+        (attachments_dir / "thumb_1_abc123").write_bytes(b"stale junk from an earlier run")
+        copy_assets(dump, out, physical_to_real={"abc123": "photo.png"})
+        assert not (attachments_dir / "thumb_1_abc123").exists()
+        assert (attachments_dir / "abc123" / "photo.png").exists()
+
+
+class TestCopyAssetsRecoversFromNestedDuplicates:
+    # The same physical_filename can have more than one on-disk copy
+    # across the stray nested subdirectories a faulty backup script can
+    # leave behind (dump/files/, dump/files/files/, ...) — os.walk visits
+    # the shallowest one first, so blindly keeping "whichever copy is
+    # found first" can mean using a corrupted shallow copy when a good
+    # copy of the very same file exists one level deeper, collected at a
+    # different time from a different source.
+
+    @staticmethod
+    def _real_png_bytes() -> bytes:
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (2, 2), color="red").save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_uses_deeper_copy_when_shallow_copy_is_corrupted(self, tmp_path):
+        dump = tmp_path / "dump"
+        (dump / "files" / "files").mkdir(parents=True)
+        (dump / "files" / "abc123").write_bytes(b"not a real png, truncated garbage")
+        (dump / "files" / "files" / "abc123").write_bytes(self._real_png_bytes())
+        out = tmp_path / "output"
+        copy_assets(dump, out, physical_to_real={"abc123": "photo.png"})
+        copied = (out / "assets" / "attachments" / "abc123" / "photo.png").read_bytes()
+        assert copied == self._real_png_bytes()
+
+    def test_keeps_shallow_copy_when_it_is_already_valid(self, tmp_path):
+        dump = tmp_path / "dump"
+        (dump / "files" / "files").mkdir(parents=True)
+        (dump / "files" / "abc123").write_bytes(self._real_png_bytes())
+        (dump / "files" / "files" / "abc123").write_bytes(b"a different, also-valid copy would never be reached")
+        out = tmp_path / "output"
+        copy_assets(dump, out, physical_to_real={"abc123": "photo.png"})
+        copied = (out / "assets" / "attachments" / "abc123" / "photo.png").read_bytes()
+        assert copied == self._real_png_bytes()
+
+    def test_falls_back_to_shallow_copy_when_all_copies_are_corrupted(self, tmp_path):
+        dump = tmp_path / "dump"
+        (dump / "files" / "files").mkdir(parents=True)
+        (dump / "files" / "abc123").write_bytes(b"garbage one")
+        (dump / "files" / "files" / "abc123").write_bytes(b"garbage two")
+        out = tmp_path / "output"
+        copy_assets(dump, out, physical_to_real={"abc123": "photo.png"})
+        # Still copies something (find_bad_attachments/--attachment-recovery
+        # handle it from here) rather than silently copying nothing.
+        assert (out / "assets" / "attachments" / "abc123" / "photo.png").read_bytes() == b"garbage one"
