@@ -1281,15 +1281,19 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
     resolve_default_style(db, dump)
 
     excluded_forum_ids: set[int] = set()
-    excluded_physical_filenames: set[str] = set()
+    # Private-message attachments are never public content, regardless of
+    # --exclude — excluded from copying unconditionally, not just when a
+    # forum happens to be excluded too.
+    excluded_physical_filenames: set[str] = db.get_private_message_attachment_physical_filenames()
     if exclude_path:
         seed_ids = load_exclusions(Path(exclude_path))
         excluded_forum_ids = expand_exclusions_recursively(seed_ids, db.get_forums())
-        excluded_physical_filenames = db.get_attachment_physical_filenames_in_forums(excluded_forum_ids)
+        excluded_physical_filenames |= db.get_attachment_physical_filenames_in_forums(excluded_forum_ids)
         logger.info("Excluding %d forum(s)/categor(y/ies) from the archive (%d listed, %d after including descendants)",
                     len(excluded_forum_ids), len(seed_ids), len(excluded_forum_ids))
 
-    physical_to_real = {a["physical_filename"]: a["real_filename"] for a in db.get_all_attachments()}
+    physical_to_real = {a["physical_filename"]: a["real_filename"] for a in db.get_all_attachments()
+                         if a["physical_filename"] not in excluded_physical_filenames}
 
     logger.info("Copying assets ...")
     copy_assets(dump, out, excluded_physical_filenames, style_css_path, physical_to_real, favicon_path, logo_path, theme)

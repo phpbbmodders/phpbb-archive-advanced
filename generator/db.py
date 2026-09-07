@@ -168,8 +168,13 @@ class PhpbbDatabase:
         )
 
     def get_attachments(self, post_id: int) -> list[dict]:
+        # post_msg_id is shared with private messages (it holds a msg_id
+        # there instead of a post_id — separate id sequences, so a msg_id
+        # can numerically collide with an unrelated post_id). in_message=0
+        # is required, not just a post_id match, or a private message's
+        # attachment can render on a public topic page.
         return self._query(
-            f'SELECT * FROM "{self._table("attachments")}" WHERE post_msg_id = ?',
+            f'SELECT * FROM "{self._table("attachments")}" WHERE post_msg_id = ? AND in_message = 0',
             (post_id,),
         )
 
@@ -190,6 +195,16 @@ class PhpbbDatabase:
                 tuple(exclude_forum_ids),
             )
         return self._query(f'SELECT * FROM "{self._table("attachments")}"')
+
+    def get_private_message_attachment_physical_filenames(self) -> set[str]:
+        """physical_filename values for private-message attachments
+        (in_message=1) — these must never be copied into assets/, the same
+        as an excluded-forum attachment. Private messages aren't public
+        content at all, regardless of forum exclusion."""
+        rows = self._query(
+            f'SELECT DISTINCT physical_filename FROM "{self._table("attachments")}" WHERE in_message = 1'
+        )
+        return {r["physical_filename"] for r in rows}
 
     def get_attachment_physical_filenames_in_forums(self, forum_ids: set[int]) -> set[str]:
         """physical_filename values for attachments belonging to posts in

@@ -72,11 +72,15 @@ CREATE TABLE `phpbb_attachments` (
   `attach_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
   `post_msg_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
   `topic_id` mediumint(8) unsigned NOT NULL DEFAULT 0,
+  `in_message` tinyint(1) unsigned NOT NULL DEFAULT 0,
   `physical_filename` varchar(255) NOT NULL DEFAULT '',
   `real_filename` varchar(255) NOT NULL DEFAULT '',
   `download_count` mediumint(8) unsigned NOT NULL DEFAULT 0,
   PRIMARY KEY (`attach_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+INSERT INTO `phpbb_attachments` VALUES (1,1,1,0,'abc123.png','photo.png',0);
+INSERT INTO `phpbb_attachments` VALUES (2,1,0,1,'pm_secret.png','secret.png',0);
 
 CREATE TABLE `phpbb_smilies` (
   `smiley_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
@@ -136,6 +140,24 @@ def test_get_posts(db_path):
     posts = db.get_posts(topic_id=1)
     assert len(posts) == 2
     assert "world" in posts[0]["post_text"]
+
+
+def test_get_attachments_excludes_private_messages(db_path):
+    # post_msg_id is shared with private messages, where it holds a
+    # msg_id instead of a post_id — separate id sequences that can
+    # numerically collide. A PM attachment (in_message=1) sharing
+    # post_msg_id=1 with the real post must never come back for that
+    # post — see phpbb-archive security review, finding 2.
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    attachments = db.get_attachments(post_id=1)
+    assert len(attachments) == 1
+    assert attachments[0]["real_filename"] == "photo.png"
+
+
+def test_get_private_message_attachment_physical_filenames(db_path):
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    names = db.get_private_message_attachment_physical_filenames()
+    assert names == {"pm_secret.png"}
 
 
 def test_get_user(db_path):
