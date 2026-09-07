@@ -52,6 +52,8 @@ usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--favicon FILE | --favicon-url URL]
                    [--logo FILE | --logo-url URL] [--logo-natural-size]
                    [--theme {light,dark}] [--board-hosts FILE]
+                   [--redirect-format {apache,nginx}]
+                   [--redirect-old-prefix PATH]
 
 Generate a static HTML archive from a phpBB MySQL dump
 
@@ -191,6 +193,28 @@ options:
                         two unrelated phpBB installs (or the same board on an
                         old and current domain) can easily reuse the same one
                         for a completely different topic.
+  --redirect-format {apache,nginx}
+                        Write a server-config snippet that 301-redirects the
+                        live board's old dynamic URLs
+                        (viewtopic.php/viewforum.php/memberlist.php) to this
+                        archive's own static pages — output/.htaccess for
+                        apache, output/nginx-redirects.conf for nginx (include
+                        it in your server {} block). A single generic rule per
+                        old script, driven by whatever id is actually in the
+                        incoming request, not a per-page list — an id that
+                        isn't actually in this archive just 404s through it,
+                        the same as it would without this. Omit for no
+                        redirect file.
+  --redirect-old-prefix PATH
+                        Path the live board's scripts were actually installed
+                        under (e.g. "board" if it was reachable at
+                        .../board/viewtopic.php), so --redirect-format's rules
+                        match the old server's real request paths. Auto-
+                        detected from the dump's own phpbb_config.script_path
+                        by default; only pass this to override that (e.g. the
+                        board moved to a different path after the dump was
+                        taken). Use "" to force no prefix. Has no effect
+                        without --redirect-format.
 ```
 
 ### Fixing avatars the generator can't fetch on its own
@@ -257,6 +281,20 @@ A post linking back to its own board (`[url=http://.../viewtopic.php?t=42]...[/u
 ```
 
 [`docs/contrib/board_hosts.json.example`](docs/contrib/board_hosts.json.example) is a real-world example — the same board really was reachable at three different domains at different points in its history, each confirmed by real links found in its own dump. A community that later merged into this board is a different case: its own historical topic ids aren't guaranteed to line up with this board's numbering, so listing its domain here would risk rewriting a link to whatever unrelated topic now happens to share that id, rather than leaving it as a normal (still working) external link.
+
+### Redirecting the old board's dynamic URLs to this archive
+
+Once the archive replaces the live board, old links (search results, bookmarks, forum posts elsewhere) still point at the dynamic URLs the live board used (`viewtopic.php?t=42`) rather than this archive's own (`topics/42.html`). `--redirect-format` writes a ready-to-use server-config snippet that 301-redirects them:
+
+```bash
+.venv/bin/python -m generator.generate --dump dump/ --output output/ --redirect-format nginx
+```
+
+`apache` writes `output/.htaccess`; `nginx` writes `output/nginx-redirects.conf` (`include` it inside your `server {}` block). One generic rule per old script (`viewtopic.php`/`viewforum.php`/`memberlist.php`), driven by whatever `t=`/`f=`/`u=` id is actually in the incoming request — not a per-page list — so the file doesn't need regenerating just because the archive's content changes.
+
+The old board's scripts weren't necessarily reachable at the web root — phpBB tracks its own install path in `phpbb_config.script_path` (e.g. `/board` for `.../board/viewtopic.php`), and the rules need to match that. This is auto-detected from the dump; `--redirect-old-prefix` overrides it for a board that moved paths since the dump was taken (`--redirect-old-prefix ""` forces no prefix).
+
+Redirect targets are relative (`/topics/42.html`) by default, which only works when the rule runs on the same host this archive is deployed to. Add `--sitemap-url` to make them absolute instead, for when the redirect has to run somewhere else — e.g. the old board's own subdomain (`board.example.com`) redirecting to a bare-domain archive (`example.com`).
 
 ### Custom color scheme
 

@@ -12,3 +12,8 @@ Ideas not yet built, practical and speculative alike.
   middleware config both need real verification (docs research, and
   ideally testing against a real Caddy/Traefik instance) before
   generating something a user might deploy without noticing it's wrong.
+  Whatever's added also needs the same `old_prefix`/absolute-`base_url`
+  parameterization `apache`/`nginx` already have (see `_apache_redirects`/
+  `_nginx_redirects`) — the old board's install path and a redirect
+  rule running on a different host than the archive are both format-
+  agnostic requirements, not something specific to apache/nginx.

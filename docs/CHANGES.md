@@ -26,6 +26,8 @@ Everything below was added on top of matildepark's original 4 commits (`b079b39`
 | `--logo-natural-size` | Shows the logo at its own original size instead of scaling it to fit the header |
 | `--theme {light,dark}` | Which built-in neutral palette to use. No effect when `--style-css` is given |
 | `--board-hosts FILE` | Extra hostnames this board is also known to have used, for internal-link rewriting — see below |
+| `--redirect-format {apache,nginx}` | Writes a server-config snippet 301-redirecting the live board's old dynamic URLs to this archive's own pages — see below |
+| `--redirect-old-prefix PATH` | Overrides the auto-detected old install path used by `--redirect-format`'s rules — see below |
 
 ## Corrupted and missing content
 
@@ -112,6 +114,20 @@ The stylesheet link carries a `?v=<hash>` of `assets/style.css`'s own content (`
 ## Sitemap and robots.txt (`--sitemap-url`)
 
 Writes `output/sitemap.xml` (index, every forum, every topic, each with a `<lastmod>` from its most recent post) and `output/robots.txt` pointing at it. Requires an absolute base URL because sitemap entries must be absolute, unlike every other link the archive generates, which stays relative so the archive works at any path. Excluded forums/topics are already left out of `output/` entirely, so they're never in the sitemap either.
+
+## Old-URL redirects (`--redirect-format`)
+
+A static archive has an entirely different URL scheme than the live phpBB board it replaces (`topics/N.html` vs. `viewtopic.php?t=N`), and neither `sitemap.xml`/`robots.txt` nor Google Search Console's own removal tooling actually redirects a visitor (or a search engine) still using an old link — a proper 301 is the correct fix, and it's mechanical enough to generate rather than hand-write.
+
+`--redirect-format {apache,nginx}` writes `output/.htaccess` (apache) or `output/nginx-redirects.conf` (nginx, `include`d into a `server {}` block) with one generic rule per old phpBB script (`viewtopic.php`, `viewforum.php`, `memberlist.php`), driven by whatever `t=`/`f=`/`u=` id is actually in the incoming request rather than an exhaustive per-page list — so the file stays small and never needs regenerating just because the archive's content changes, only if its own URL layout does. A `viewtopic.php` link's own `p=` post id is preserved as a `#pN` anchor on the redirect target. An id that isn't actually in this archive (excluded, or never existed) redirects to a page that 404s, the same outcome as no redirect rule at all.
+
+The old board's scripts weren't necessarily reachable at the web root — phpBB tracks its own install path in `phpbb_config.script_path` (e.g. `/board` for a board installed at `.../board/viewtopic.php`), and the rules need to match that, not wherever this archive itself now lives. `--redirect-format` auto-detects it from the dump; `--redirect-old-prefix PATH` overrides it for a board that moved paths after the dump was taken (`--redirect-old-prefix ""` forces no prefix).
+
+The redirect target itself is root-relative (`/topics/N.html`) by default, which only resolves correctly when the rule runs on the same host the archive is deployed to. When `--sitemap-url` is also given, the target becomes that absolute URL instead — needed when the redirect rule has to run somewhere other than the archive's own host, e.g. the old board's own subdomain (`board.example.com`) redirecting to a bare-domain archive (`example.com`).
+
+Real-world example verified against phpbbmodders.net's own dump: `phpbb_config.script_path` is `/board` (a real non-root install), so the generated apache rule matches `board/viewtopic.php`, not just `viewtopic.php`. Both the apache and nginx output were checked with real syntax validators (`apachectl -t`, `nginx -t`) in isolated test configs, for both the prefixed and absolute-URL cases.
+
+Caddy and Traefik are deferred — see [`docs/TODO.md`](TODO.md).
 
 ## Open Graph / Twitter Card meta tags
 
