@@ -220,6 +220,17 @@ blockquote .quote-header { font-weight: bold; font-size: 0.9em; color: #536482; 
 
 details.spoiler summary { cursor: pointer; color: #2E6EA6; }
 
+/* Board-statistics block (index.html only) */
+.board-stats {
+  background: #D1D7E3;
+  border: 1px solid #B3C0D8;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+.board-stats h3 { margin: 0 0 4px; font-size: 1em; color: #536482; }
+.board-stats p { margin: 0; font-size: 0.9em; color: #333; }
+
 /* ── footer ── */
 #page-footer {
   text-align: center;

@@ -227,6 +227,17 @@ blockquote .quote-header { font-weight: bold; font-size: 0.9em; color: #A8B4C4; 
 
 details.spoiler summary { cursor: pointer; color: #6FA8DC; }
 
+/* Board-statistics block (index.html only) */
+.board-stats {
+  background: #22252B;
+  border: 1px solid #333840;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+.board-stats h3 { margin: 0 0 4px; font-size: 1em; color: #A8B4C4; }
+.board-stats p { margin: 0; font-size: 0.9em; color: #C9CDD3; }
+
 /* ── footer ── */
 #page-footer {
   text-align: center;

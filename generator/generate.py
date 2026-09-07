@@ -1112,13 +1112,16 @@ def process_forum_descs(forums: list[dict], parser: PhpbbBBCodeParser) -> list[d
 
 
 def render_index(env: jinja2.Environment, out: Path, forum_tree: list[dict],
-                 total_posts: int, site_name: str = "",
+                 total_posts: int, total_topics: int = 0, total_members: int = 0,
+                 site_name: str = "",
                  announcement_html: str | None = None) -> None:
     tmpl = env.get_template("index.html")
     html = tmpl.render(
         page_title="Board Index",
         forum_tree=forum_tree,
         total_posts=total_posts,
+        total_topics=total_topics,
+        total_members=total_members,
         assets="assets",
         root="",
         site_name=site_name,
@@ -1881,7 +1884,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     total_posts = render_topics(env, out, db, users, smilies, ranks, custom_bbcodes, forums, bad_attachments, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name, announcement_html=announcement_html_nested, site_url=site_url)
     render_forums(env, out, db, users, shared_parser_nested, forums, site_name=site_name, announcement_html=announcement_html_nested, exclude_forum_ids=excluded_forum_ids)
     render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name)
-    render_index(env, out, forum_tree or [], total_posts, site_name=site_name, announcement_html=announcement_html)
+    render_index(env, out, forum_tree or [], total_posts, len(internal_topic_ids), len(users), site_name=site_name, announcement_html=announcement_html)
 
     if site_url:
         render_sitemap(out, db, site_url, forums)

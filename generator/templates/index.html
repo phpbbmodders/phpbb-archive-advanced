@@ -87,6 +87,10 @@
 {% else %}
 <p>No forums found.</p>
 {% endfor %}
+<div class="board-stats">
+  <h3>Statistics</h3>
+  <p>Total posts <strong>{{ total_posts }}</strong> &bull; Total topics <strong>{{ total_topics }}</strong> &bull; Total members <strong>{{ total_members }}</strong></p>
+</div>
 {% endblock %}
 
 {% block footer_note %}{{ total_posts }} posts archived{% endblock %}
