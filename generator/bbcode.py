@@ -92,7 +92,26 @@ class PhpbbBBCodeParser:
                 fragment_match = re.search(r'(#p\d+)', url)
                 fragment = fragment_match.group(1) if fragment_match else ''
                 return f'{self.topics_prefix}/{topic_id}.html{fragment}'
-        return self._strip_sid(url)
+        result = self._strip_sid(url)
+        # phpBB never validated a stored [url=...]'s scheme at write time,
+        # so a real dump can still contain a spam/exploit post with
+        # [url=javascript:...] or [url=data:...] — rendered as a live
+        # link, that executes on click. Neutralize anything outside a
+        # small allowlist (or no scheme at all, i.e. a relative/anchor
+        # link, which can't execute) rather than trusting the dump.
+        return result if self._is_safe_url(result) else '#'
+
+    @staticmethod
+    def _is_safe_url(url: str) -> bool:
+        """True if url is safe to use as a rendered link's href."""
+        lower = url.strip().lower()
+        if lower.startswith(("http://", "https://", "ftp://", "ftps://", "mailto:")):
+            return True
+        # No scheme at all (relative path, #anchor, or protocol-relative
+        # //host/...) is safe — a scheme is only present if there's a ':'
+        # before the first path/query/fragment separator.
+        prefix = re.split(r'[/?#]', lower, maxsplit=1)[0]
+        return ':' not in prefix
 
     @staticmethod
     def _strip_sid(url: str) -> str:
@@ -289,7 +308,7 @@ class PhpbbBBCodeParser:
         #     as the sole span between the brackets.
         text = re.sub(r'\[img\](https?://[^\s\[\]<>]+)\[/img\]', lambda m: replace_xml_img_url(m.group(1)), text)
 
-        text = re.sub(r'<URL url="([^"]*)"[^>]*>', lambda m: f'<a href="{self._rewrite_internal_link(m.group(1))}" class="postlink">', text)
+        text = re.sub(r'<URL url="([^"]*)"[^>]*>', lambda m: f'<a href="{html.escape(self._rewrite_internal_link(m.group(1)), quote=True)}" class="postlink">', text)
         text = re.sub(r'</URL>', '</a>', text)
         text = re.sub(r'<IMG\s+src="([^"]*)"[^>]*>.*?</IMG>', replace_xml_img, text, flags=re.DOTALL)
         # Also handle self-closing form
@@ -451,13 +470,13 @@ class PhpbbBBCodeParser:
         # URL with label
         text = re.sub(
             r'\[url=([^\]]+)\](.*?)\[/url\]',
-            lambda m: f'<a href="{self._rewrite_internal_link(m.group(1))}" class="postlink">{m.group(2)}</a>',
+            lambda m: f'<a href="{html.escape(self._rewrite_internal_link(m.group(1)), quote=True)}" class="postlink">{m.group(2)}</a>',
             text, flags=re.DOTALL,
         )
         # URL bare
         text = re.sub(
             r'\[url\](.*?)\[/url\]',
-            lambda m: f'<a href="{self._rewrite_internal_link(m.group(1))}" class="postlink">{m.group(1)}</a>',
+            lambda m: f'<a href="{html.escape(self._rewrite_internal_link(m.group(1)), quote=True)}" class="postlink">{m.group(1)}</a>',
             text, flags=re.DOTALL,
         )
 

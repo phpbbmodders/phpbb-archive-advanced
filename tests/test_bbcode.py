@@ -46,6 +46,15 @@ class TestBasicTags:
         result = parser.convert("[url]https://example.com[/url]", uid="")
         assert 'href="https://example.com"' in result
 
+    def test_url_rejects_dangerous_scheme(self, parser):
+        # phpBB never validated a stored [url=...]'s scheme at write time,
+        # so a real dump can contain old spam/exploit content using it —
+        # see phpbb-archive security review, finding 6.
+        result = parser.convert("[url=javascript:alert(1)]click[/url]", uid="")
+        assert "javascript:" not in result
+        assert 'href="#"' in result
+        assert "click" in result
+
     def test_image(self, parser):
         result = parser.convert("[img]https://example.com/pic.png[/img]", uid="")
         assert '<img' in result
