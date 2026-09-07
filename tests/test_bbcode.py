@@ -375,3 +375,41 @@ class TestXmlUrlEntityDecoding:
             '<t><URL url="http://example.com/x?a=1&amp;b=2">link</URL></t>', uid="")
         assert 'href="http://example.com/x?a=1&amp;b=2"' in result
         assert "&amp;amp;" not in result
+
+
+class TestStandaloneImgInSyntaxMarkers:
+    # <s>[img]</s>/<e>[/img]</e> sitting alone as an XML syntax marker's
+    # whole content used to be stripped by the generic <s>/<e> cleanup
+    # before the [img]...[/img] handlers further down ever saw the
+    # bracket text — losing it entirely and leaving a bare, unresolved
+    # URL as literal visible text. Confirmed real on phpbbmodders.net:
+    # every actual <s>[img]</s> occurrence (134) happens to sit inside an
+    # already-working <IMG src="...">...</IMG> wrapper, so this specific
+    # failure doesn't reproduce there — this is a defensive correctness
+    # fix verified with a synthetic standalone case, not a real regen.
+
+    def test_standalone_bracket_image_resolves(self, parser):
+        parser.external_images["http://example.com/pic.png"] = "abc123.png"
+        result = parser.convert(
+            '<t><s>[img]</s>http://example.com/pic.png<e>[/img]</e></t>', uid="")
+        assert '<img' in result
+        assert 'src="../assets/external/abc123.png"' in result
+
+    def test_nested_inside_img_tag_still_works_unchanged(self, parser):
+        # Real shape confirmed on phpbbmodders.net (post 227/228 and
+        # others): the outer <IMG src="...">...</IMG> already resolves
+        # correctly regardless of what junk sits inside it — preserving
+        # rather than stripping the inner <s>[img]</s> text must not
+        # change that.
+        parser.external_images["http://example.com/pic.png"] = "abc123.png"
+        result = parser.convert(
+            '<t><IMG src="http://example.com/pic.png"><s>[img]</s>'
+            'http://example.com/pic.png<e>[/img]</e></IMG></t>', uid="")
+        assert result.count('<img') == 1
+        assert 'src="../assets/external/abc123.png"' in result
+
+    def test_unrelated_syntax_markers_still_stripped(self, parser):
+        result = parser.convert('<t><B><s>[b]</s>bold<e>[/b]</e></B></t>', uid="")
+        assert "[b]" not in result
+        assert "[/b]" not in result
+        assert "<strong>bold</strong>" in result

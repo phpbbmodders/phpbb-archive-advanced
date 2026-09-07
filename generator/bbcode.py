@@ -309,6 +309,23 @@ class PhpbbBBCodeParser:
         # Normalize <br/> (XML self-closing) to <br> and drop the newline that follows
         text = re.sub(r'<br\s*/?>\n?', '<br>', text)
 
+        # A bare [img]/[/img] sitting alone as an <s>/<e> marker's whole
+        # content must survive the generic strip below, unlike every other
+        # marker — the [img]...[/img] handlers further down in this same
+        # function need the literal bracket text still present to resolve
+        # it (e.g. a standalone `<s>[img]</s>http://example.com/pic.png
+        # <e>[/img]</e>`, with no outer <IMG src="...">...</IMG> wrapper
+        # around it, would otherwise lose the brackets here and fall
+        # through every handler as bare, unresolved visible text). Real
+        # dump check: every actual `<s>[img]</s>` occurrence on
+        # phpbbmodders.net (134) happens to sit inside a working
+        # <IMG src="...">...</IMG> wrapper already, so this exact failure
+        # doesn't reproduce there — the outer <IMG> handler's non-greedy
+        # match already discards this inner text regardless, so preserving
+        # it here doesn't change that case either. Kept as a defensive
+        # correctness fix, verified via a synthetic test.
+        text = re.sub(r'<s>(\[img\])</s>', r'\1', text)
+        text = re.sub(r'<e>(\[/img\])</e>', r'\1', text)
         # Strip <s>...</s> and <e>...</e> (phpBB syntax markers, not content)
         text = re.sub(r'<s>[^<]*</s>', '', text)
         text = re.sub(r'<e>[^<]*</e>', '', text)
