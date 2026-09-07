@@ -296,8 +296,14 @@ class PhpbbDatabase:
         # can numerically collide with an unrelated post_id). in_message=0
         # is required, not just a post_id match, or a private message's
         # attachment can render on a public topic page.
+        # attach_id DESC matches phpBB's own ordering (viewtopic.php's
+        # attachment query) — the numeric index in a stored [attachment=N]
+        # tag was assigned against that order when the post was originally
+        # rendered, so returning them in a different order would pair a
+        # tag with the wrong attachment.
         return self._query(
-            f'SELECT * FROM "{self._table("attachments")}" WHERE post_msg_id = ? AND in_message = 0',
+            f'SELECT * FROM "{self._table("attachments")}" WHERE post_msg_id = ? AND in_message = 0 '
+            f"ORDER BY attach_id DESC",
             (post_id,),
         )
 

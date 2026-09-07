@@ -86,6 +86,8 @@ CREATE TABLE `phpbb_attachments` (
 
 INSERT INTO `phpbb_attachments` VALUES (1,1,1,0,'abc123.png','photo.png',0);
 INSERT INTO `phpbb_attachments` VALUES (2,1,0,1,'pm_secret.png','secret.png',0);
+INSERT INTO `phpbb_attachments` VALUES (3,2,1,0,'first.png','first.png',0);
+INSERT INTO `phpbb_attachments` VALUES (4,2,1,0,'second.png','second.png',0);
 
 CREATE TABLE `phpbb_smilies` (
   `smiley_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
@@ -207,6 +209,20 @@ def test_get_attachments_excludes_private_messages(db_path):
     attachments = db.get_attachments(post_id=1)
     assert len(attachments) == 1
     assert attachments[0]["real_filename"] == "photo.png"
+
+
+def test_get_attachments_ordered_by_attach_id_desc(db_path):
+    # phpBB's own viewtopic.php query orders attachments "attach_id DESC,
+    # post_msg_id ASC" — a stored [attachment=N] tag's numeric index was
+    # assigned against that order when the post was originally rendered,
+    # so returning them in a different order (e.g. insertion/rowid order)
+    # pairs a tag with the wrong attachment. Inserted here as attach_id
+    # 3 then 4 (ascending) to catch a query with no ORDER BY, which
+    # SQLite would otherwise return in that same insertion order — see
+    # phpbb-archive security review, finding 9.
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    attachments = db.get_attachments(post_id=2)
+    assert [a["real_filename"] for a in attachments] == ["second.png", "first.png"]
 
 
 def test_get_private_message_attachment_physical_filenames(db_path):

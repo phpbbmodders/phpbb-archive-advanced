@@ -194,6 +194,17 @@ class TestAttachments:
         assert result.count('class="inline-attachment"') == 1
         assert "post-attachments" not in result
 
+    def test_attachment_with_uid_not_duplicated_when_embedded(self, parser):
+        # Trailing-attachment detection ran against the pre-UID-strip
+        # text but only recognized a bare [attachment=N] tag, so a real
+        # UID-tagged post ([attachment=0:abcde]...[/attachment:abcde])
+        # never looked embedded and got appended a second time in the
+        # trailing section — see phpbb-archive security review, finding 9.
+        result = parser.convert(
+            "[attachment=0:abcde]photo.png[/attachment:abcde]", uid="abcde", post_id=1)
+        assert result.count('class="inline-attachment"') == 1
+        assert "post-attachments" not in result
+
 
 class TestNesting:
     def test_bold_inside_quote(self, parser):

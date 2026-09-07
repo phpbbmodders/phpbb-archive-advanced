@@ -160,9 +160,13 @@ class PhpbbBBCodeParser:
         if not post_attachments:
             return result
 
-        # Collect indices already embedded in the original text
+        # Collect indices already embedded in the original text. Checked
+        # against original_text, which still has its UID suffix
+        # (:abc123]) at this point — [attachment=N] must match it too, or
+        # every UID-tagged post's inline attachments look unembedded here
+        # and get appended a second time in the trailing section.
         embedded: set[int] = set()
-        for m in re.finditer(r'\[attachment=(\d+)\]', original_text):
+        for m in re.finditer(r'\[attachment=(\d+)(?::[^\]]*)?\]', original_text):
             embedded.add(int(m.group(1)))
         for m in re.finditer(r'<ATTACHMENT[^>]*\bindex="(\d+)"', original_text, re.IGNORECASE):
             embedded.add(int(m.group(1)))
