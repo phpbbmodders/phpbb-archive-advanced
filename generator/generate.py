@@ -327,6 +327,22 @@ def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: s
         dest = assets / "attachments"
         dest.mkdir(exist_ok=True)
         copied = 0
+        # Remove anything now excluded that an earlier --incremental run
+        # already copied before it became excluded (a newly-added
+        # exclusion, or an attachment that turned out to belong to a
+        # private message) — --incremental otherwise only ever adds
+        # files here, never revisits ones already on disk.
+        removed = 0
+        for name in excluded_physical_filenames or ():
+            target = dest / name
+            if target.is_dir():
+                shutil.rmtree(target)
+                removed += 1
+            elif target.exists():
+                target.unlink()
+                removed += 1
+        if removed:
+            logger.info("Removed %d previously-copied attachment(s) now excluded", removed)
         for dirpath, _dirnames, filenames in os.walk(files_src):
             for name in filenames:
                 if excluded_physical_filenames and name in excluded_physical_filenames:
@@ -388,16 +404,24 @@ def _attachment_is_valid(path: Path, real_filename: str) -> bool:
     return True
 
 
-def find_bad_attachments(db: PhpbbDatabase, out: Path) -> dict[str, str]:
+def find_bad_attachments(db: PhpbbDatabase, out: Path, excluded_physical_filenames: set[str] | None = None) -> dict[str, str]:
     """Return {physical_filename: real_filename} for image/zip/rar attachments
     that are missing from assets/attachments/ or fail to validate for
     their type (see _attachment_is_valid). These get dropped from post
     bodies instead of rendered as a broken link, unless
-    --attachment-recovery finds a working copy."""
+    --attachment-recovery finds a working copy. excluded_physical_filenames
+    (private-message and excluded-forum attachments — see
+    _open_db_and_copy_assets) are skipped entirely rather than reported as
+    "bad": they were never copied to assets/ on purpose, so treating that
+    absence as corruption would let --attachment-recovery undo the
+    exclusion by restoring a working copy from the recovery backup."""
     attachments_dir = out / "assets" / "attachments"
+    excluded = excluded_physical_filenames or set()
     bad: dict[str, str] = {}
     checked = 0
     for att in db.get_all_attachments():
+        if att["physical_filename"] in excluded:
+            continue
         real = att["real_filename"]
         lower = real.lower()
         if not (lower.endswith(IMAGE_EXTENSIONS) or lower.endswith((".zip", ".rar"))):
@@ -1245,10 +1269,10 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
                               style_css_path: str | None = None,
                               favicon_path: str | None = None,
                               logo_path: str | None = None,
-                              theme: str = "light") -> tuple[PhpbbDatabase, Path, Path, str, set[int], str]:
+                              theme: str = "light") -> tuple[PhpbbDatabase, Path, Path, str, set[int], str, set[str]]:
     """Shared setup for generate() and find_missing_avatars(): import the
     dump into SQLite and copy assets/. Returns (db, dump, out, site_name,
-    excluded_forum_ids, db_path).
+    excluded_forum_ids, db_path, excluded_physical_filenames).
 
     db_path is a system-temp file, not anything under out/ — the imported
     database holds the *entire* dump verbatim (private messages, password
@@ -1298,7 +1322,7 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
     logger.info("Copying assets ...")
     copy_assets(dump, out, excluded_physical_filenames, style_css_path, physical_to_real, favicon_path, logo_path, theme)
 
-    return db, dump, out, site_name, excluded_forum_ids, db_path
+    return db, dump, out, site_name, excluded_forum_ids, db_path, excluded_physical_filenames
 
 
 def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None = None,
@@ -1333,10 +1357,10 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
             logger.info("Clearing previous output: %s", out)
             shutil.rmtree(out)
 
-    db, dump, out, site_name, excluded_forum_ids, db_path = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path, favicon_path, logo_path, theme)
+    db, dump, out, site_name, excluded_forum_ids, db_path, excluded_physical_filenames = _open_db_and_copy_assets(dump_dir, output_dir, exclude_path, style_css_path, favicon_path, logo_path, theme)
 
     # --- Image/zip/rar attachments missing or corrupted in the source dump ---
-    bad_attachments_map = find_bad_attachments(db, out)
+    bad_attachments_map = find_bad_attachments(db, out, excluded_physical_filenames)
     if attachment_recovery_dir:
         bad_attachments = recover_bad_attachments(bad_attachments_map, Path(attachment_recovery_dir), out)
     else:
@@ -1476,7 +1500,7 @@ def find_missing_avatars(dump_dir: str, output_dir: str, avatar_overrides_path: 
     generate() does (local files, remote fetches, any existing overrides),
     then list every user whose avatar still doesn't resolve and write a
     starter --avatar-overrides template for them. Does not render the site."""
-    db, dump, out, _site_name, _excluded, db_path = _open_db_and_copy_assets(dump_dir, output_dir)
+    db, dump, out, _site_name, _excluded, db_path, _excluded_files = _open_db_and_copy_assets(dump_dir, output_dir)
 
     users = db.get_all_users()
     bad_avatars = find_bad_avatars(users, out)
@@ -1496,7 +1520,7 @@ def list_forums(dump_dir: str, output_dir: str) -> None:
     """Diagnostic mode (-l/--list-forums): print every forum/category with
     its forum_id, indented to show nesting, so you know which id(s) to put
     in an --exclude JSON file. Does not render the site."""
-    db, dump, out, _site_name, _excluded, db_path = _open_db_and_copy_assets(dump_dir, output_dir)
+    db, dump, out, _site_name, _excluded, db_path, _excluded_files = _open_db_and_copy_assets(dump_dir, output_dir)
 
     tree = build_forum_tree(db.get_forums())
     type_label = {0: "category", 1: "forum", 2: "link"}
@@ -1519,7 +1543,7 @@ def check_images(dump_dir: str, output_dir: str, url_mirrors_path: str | None = 
     which ones fail to resolve (via any --url-mirrors, or the network) —
     ahead of committing to a full, slow generate() run. Does not render the
     site or write any topic/forum/user pages."""
-    db, dump, out, _site_name, _excluded, db_path = _open_db_and_copy_assets(dump_dir, output_dir)
+    db, dump, out, _site_name, _excluded, db_path, _excluded_files = _open_db_and_copy_assets(dump_dir, output_dir)
 
     users = db.get_all_users()
     forums = db.get_forums()
