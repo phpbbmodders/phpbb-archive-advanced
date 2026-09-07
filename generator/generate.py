@@ -1295,10 +1295,15 @@ def _apache_redirects(old_prefix: str, base_url: str) -> str:
 # that doesn't exist, the same 404 it would give without this rule.
 RewriteEngine On
 
-# {p}viewtopic.php?...t=<id>&p=<post_id>[...] -> {base_url}topics/<id>.html#p<post_id>
-RewriteCond %{{QUERY_STRING}} (?:^|&)t=([0-9]+)
-RewriteCond %{{QUERY_STRING}} (?:^|&)p=([0-9]+)
-RewriteRule ^{p}viewtopic\\.php$ {base_url}topics/%1.html#p%2? [R=301,L]
+# {p}viewtopic.php?...t=<id>...p=<post_id>[...] -> {base_url}topics/<id>.html#p<post_id>
+# (or the less common ...p=<post_id>...t=<id>... order — %N backreferences
+# only ever come from the single LAST matched RewriteCond, never accumulate
+# across separate RewriteCond lines, so t and p must be captured together
+# in one regex per order, not as two separate conditions)
+RewriteCond %{{QUERY_STRING}} (?:^|&)t=([0-9]+)(?:&[^&]*)*&p=([0-9]+)
+RewriteRule ^{p}viewtopic\\.php$ {base_url}topics/%1.html#p%2? [NE,R=301,L]
+RewriteCond %{{QUERY_STRING}} (?:^|&)p=([0-9]+)(?:&[^&]*)*&t=([0-9]+)
+RewriteRule ^{p}viewtopic\\.php$ {base_url}topics/%2.html#p%1? [NE,R=301,L]
 
 # {p}viewtopic.php?...t=<id>[...] (no specific post) -> {base_url}topics/<id>.html
 RewriteCond %{{QUERY_STRING}} (?:^|&)t=([0-9]+)
@@ -1457,6 +1462,33 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
     return db, dump, out, site_name, excluded_forum_ids, db_path, excluded_physical_filenames
 
 
+def clean_disabled_feature_output(out: Path, search: bool, sitemap_url: str | None,
+                                   redirect_format: str | None) -> None:
+    """Remove feature-gated output an earlier run left behind that this
+    run's flags no longer request (--search dropped, --sitemap-url
+    removed, --redirect-format disabled or switched apache<->nginx) —
+    an --incremental run's unconditional cleanup only ever clears
+    forums/topics/users/index.html, which are rebuilt every run
+    regardless of flags, so this content would otherwise sit in output/
+    indefinitely showing stale or removed content."""
+    conditionally_generated = {
+        "search.html": search,
+        "pagefind": search,
+        "sitemap.xml": bool(sitemap_url),
+        "robots.txt": bool(sitemap_url),
+        ".htaccess": redirect_format == "apache",
+        "nginx-redirects.conf": redirect_format == "nginx",
+    }
+    for name, keep in conditionally_generated.items():
+        if keep:
+            continue
+        target = out / name
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
+
+
 def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None = None,
              exclude_path: str | None = None, url_mirrors_path: str | None = None,
              incremental: bool = False, ignored_hosts_path: str | None = None,
@@ -1511,6 +1543,8 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
                     shutil.rmtree(target)
                 elif target.exists():
                     target.unlink()
+
+            clean_disabled_feature_output(out, search=search, sitemap_url=sitemap_url, redirect_format=redirect_format)
         else:
             # Start from a clean slate: without this, a forum/topic/user
             # that no longer gets a page this run (e.g. a category, per

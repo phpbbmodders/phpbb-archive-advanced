@@ -1,6 +1,12 @@
+import re
 from pathlib import Path
 
-from generator.generate import _apache_redirects, _nginx_redirects, render_redirects
+from generator.generate import (
+    _apache_redirects,
+    _nginx_redirects,
+    clean_disabled_feature_output,
+    render_redirects,
+)
 
 
 class TestRedirectGeneration:
@@ -14,13 +20,15 @@ class TestRedirectGeneration:
 
     def test_apache_no_prefix_relative_base(self):
         result = _apache_redirects("", "/")
-        assert "RewriteRule ^viewtopic\\.php$ /topics/%1.html#p%2? [R=301,L]" in result
+        assert "RewriteRule ^viewtopic\\.php$ /topics/%1.html#p%2? [NE,R=301,L]" in result
+        assert "RewriteRule ^viewtopic\\.php$ /topics/%2.html#p%1? [NE,R=301,L]" in result
         assert "RewriteRule ^viewforum\\.php$ /forums/%1.html? [R=301,L]" in result
         assert "RewriteRule ^memberlist\\.php$ /users/%1.html? [R=301,L]" in result
 
     def test_apache_with_prefix(self):
         result = _apache_redirects("board", "/")
-        assert "RewriteRule ^board/viewtopic\\.php$ /topics/%1.html#p%2? [R=301,L]" in result
+        assert "RewriteRule ^board/viewtopic\\.php$ /topics/%1.html#p%2? [NE,R=301,L]" in result
+        assert "RewriteRule ^board/viewtopic\\.php$ /topics/%2.html#p%1? [NE,R=301,L]" in result
         assert "RewriteRule ^board/viewforum\\.php$ /forums/%1.html? [R=301,L]" in result
         assert "RewriteRule ^board/memberlist\\.php$ /users/%1.html? [R=301,L]" in result
 
@@ -30,7 +38,58 @@ class TestRedirectGeneration:
         # absolute target — a root-relative "/topics/..." would resolve
         # against that other host instead.
         result = _apache_redirects("", "https://archive.example.com/")
-        assert "RewriteRule ^viewtopic\\.php$ https://archive.example.com/topics/%1.html#p%2? [R=301,L]" in result
+        assert "RewriteRule ^viewtopic\\.php$ https://archive.example.com/topics/%1.html#p%2? [NE,R=301,L]" in result
+
+    def test_apache_uses_NE_flag_for_fragment_carrying_rules(self):
+        # Without [NE], Apache percent-encodes "#" to "%23" in an
+        # external-redirect target (confirmed against Apache's own
+        # mod_rewrite flags docs, and reproduced live: the same rule
+        # without [NE] redirected to a literal "...html%23p99" instead
+        # of "...html#p99"). Only the two t+p combined rules carry a
+        # fragment; the t-only/f/u rules don't need it.
+        result = _apache_redirects("", "/")
+        assert result.count("[NE,R=301,L]") == 2
+        assert "[R=301,L]" in result  # the non-fragment rules still exist, without NE
+
+    def test_apache_t_and_p_backreferences_not_split_across_conditions(self):
+        # %N backreferences only ever come from the single LAST matched
+        # RewriteCond — confirmed against Apache's own mod_rewrite docs,
+        # and reproduced live: two separate RewriteCond lines (one for
+        # t=, one for p=) made %1 and %2 BOTH resolve to whichever
+        # condition matched last, producing a nonsense redirect
+        # (topics/<post_id>.html#p with an empty anchor) instead of
+        # topics/<topic_id>.html#p<post_id>. t and p must be captured
+        # by a single RewriteCond's own regex, not two separate ones.
+        result = _apache_redirects("", "/")
+        # Extract each RewriteCond immediately preceding a viewtopic
+        # RewriteRule with a #p fragment in its target, and confirm each
+        # one is a single condition capturing both t and p together.
+        pairs = re.findall(
+            r'RewriteCond %\{QUERY_STRING\} (\S+)\nRewriteRule \^viewtopic\\\.php\$ \S*#p\S*\?',
+            result,
+        )
+        assert len(pairs) == 2
+        for pattern in pairs:
+            assert pattern.count("([0-9]+)") == 2  # both t and p captured by ONE regex
+
+    def test_apache_t_and_p_regex_matches_real_query_shapes(self):
+        # Direct regex-level check standing in for a live Apache request
+        # (verified separately, live, against a real isolated apache2
+        # instance) — Python's re engine handles this pattern (no PCRE-
+        # specific syntax) identically to Apache's. Real query shapes
+        # pulled straight from phpbbmodders.net's own dump, including
+        # the far more common t-before-p order and one confirmed real
+        # example of the rarer p-before-t order.
+        result = _apache_redirects("", "/")
+        t_then_p = re.search(r'\(\?:\^\|&\)t=\(\[0-9\]\+\)\(\?:&\[\^&\]\*\)\*&p=\(\[0-9\]\+\)', result).group(0)
+        p_then_t = re.search(r'\(\?:\^\|&\)p=\(\[0-9\]\+\)\(\?:&\[\^&\]\*\)\*&t=\(\[0-9\]\+\)', result).group(0)
+
+        m = re.search(t_then_p, "f=118&t=6367&p=26325")
+        assert m.groups() == ("6367", "26325")
+        m = re.search(t_then_p, "t=42&p=99")
+        assert m.groups() == ("42", "99")
+        m = re.search(p_then_t, "f=125&p=50434&t=10913")
+        assert m.groups() == ("50434", "10913")
 
     def test_nginx_no_prefix_relative_base(self):
         result = _nginx_redirects("", "/")
@@ -58,3 +117,60 @@ class TestRedirectGeneration:
         render_redirects(tmp_path, "nginx", "board", "/")
         content = (tmp_path / "nginx-redirects.conf").read_text(encoding="utf-8")
         assert "location = /board/viewtopic.php {" in content
+
+
+class TestCleanDisabledFeatureOutput:
+    # An --incremental run's unconditional cleanup only ever clears
+    # forums/topics/users/index.html — feature-gated output (search,
+    # sitemap/robots, redirects) isn't in that list since a normal run
+    # regenerates it fresh, but that means a later run that disables a
+    # feature (or switches --redirect-format apache<->nginx) leaves the
+    # earlier run's file sitting there indefinitely, showing stale or
+    # removed content. Confirmed on a real regeneration: nginx-
+    # redirects.conf from an earlier --redirect-format nginx run was
+    # still present after a later --redirect-format apache run.
+
+    def _touch(self, out, *names):
+        for name in names:
+            if name in ("pagefind",):
+                (out / name).mkdir()
+                (out / name / "pagefind-entry.json").write_text("{}", encoding="utf-8")
+            else:
+                (out / name).write_text("stale", encoding="utf-8")
+
+    def test_removes_search_output_when_search_disabled(self, tmp_path):
+        self._touch(tmp_path, "search.html", "pagefind")
+        clean_disabled_feature_output(tmp_path, search=False, sitemap_url=None, redirect_format=None)
+        assert not (tmp_path / "search.html").exists()
+        assert not (tmp_path / "pagefind").exists()
+
+    def test_keeps_search_output_when_search_enabled(self, tmp_path):
+        self._touch(tmp_path, "search.html", "pagefind")
+        clean_disabled_feature_output(tmp_path, search=True, sitemap_url=None, redirect_format=None)
+        assert (tmp_path / "search.html").exists()
+        assert (tmp_path / "pagefind").exists()
+
+    def test_removes_sitemap_output_when_sitemap_url_dropped(self, tmp_path):
+        self._touch(tmp_path, "sitemap.xml", "robots.txt")
+        clean_disabled_feature_output(tmp_path, search=False, sitemap_url=None, redirect_format=None)
+        assert not (tmp_path / "sitemap.xml").exists()
+        assert not (tmp_path / "robots.txt").exists()
+
+    def test_removes_stale_nginx_redirects_when_switched_to_apache(self, tmp_path):
+        self._touch(tmp_path, "nginx-redirects.conf")
+        clean_disabled_feature_output(tmp_path, search=False, sitemap_url=None, redirect_format="apache")
+        assert not (tmp_path / "nginx-redirects.conf").exists()
+
+    def test_removes_stale_htaccess_when_switched_to_nginx(self, tmp_path):
+        self._touch(tmp_path, ".htaccess")
+        clean_disabled_feature_output(tmp_path, search=False, sitemap_url=None, redirect_format="nginx")
+        assert not (tmp_path / ".htaccess").exists()
+
+    def test_removes_redirect_output_when_redirect_format_dropped(self, tmp_path):
+        self._touch(tmp_path, ".htaccess", "nginx-redirects.conf")
+        clean_disabled_feature_output(tmp_path, search=False, sitemap_url=None, redirect_format=None)
+        assert not (tmp_path / ".htaccess").exists()
+        assert not (tmp_path / "nginx-redirects.conf").exists()
+
+    def test_missing_files_are_not_an_error(self, tmp_path):
+        clean_disabled_feature_output(tmp_path, search=False, sitemap_url=None, redirect_format=None)
