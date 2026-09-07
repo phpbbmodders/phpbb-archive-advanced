@@ -125,9 +125,13 @@ class PhpbbDatabase:
         )
 
     def get_topics(self, forum_id: int) -> list[dict]:
+        # topic_visibility = 1 is phpBB's own ITEM_APPROVED — the same
+        # condition phpBB itself applies before showing a topic to an
+        # anonymous/non-moderator visitor. 0/2/3 (unapproved, soft-deleted,
+        # needs-reapproval) are moderation states, not public content.
         return self._unescape_fields(
             self._query(
-                f'SELECT * FROM "{self._table("topics")}" WHERE forum_id = ? '
+                f'SELECT * FROM "{self._table("topics")}" WHERE forum_id = ? AND topic_visibility = 1 '
                 f"ORDER BY topic_last_post_time DESC",
                 (forum_id,),
             ),
@@ -142,8 +146,11 @@ class PhpbbDatabase:
         return rows[0]["topic_id"] if rows else None
 
     def get_posts(self, topic_id: int) -> list[dict]:
+        # post_visibility = 1: same reasoning as get_topics() above — a
+        # post can be individually hidden/unapproved/pending-reapproval
+        # even inside an otherwise-visible topic.
         return self._query(
-            f'SELECT * FROM "{self._table("posts")}" WHERE topic_id = ? '
+            f'SELECT * FROM "{self._table("posts")}" WHERE topic_id = ? AND post_visibility = 1 '
             f"ORDER BY post_time ASC",
             (topic_id,),
         )

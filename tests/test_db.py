@@ -47,10 +47,12 @@ CREATE TABLE `phpbb_topics` (
   `topic_last_post_time` int(11) unsigned NOT NULL DEFAULT 0,
   `topic_last_poster_name` varchar(255) NOT NULL DEFAULT '',
   `topic_status` tinyint(3) NOT NULL DEFAULT 0,
+  `topic_visibility` tinyint(3) NOT NULL DEFAULT 1,
   PRIMARY KEY (`topic_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
-INSERT INTO `phpbb_topics` VALUES (1,1,'Test Topic',2,1600000000,50,3,3,1700000000,'testuser',0);
+INSERT INTO `phpbb_topics` VALUES (1,1,'Test Topic',2,1600000000,50,3,3,1700000000,'testuser',0,1);
+INSERT INTO `phpbb_topics` VALUES (2,1,'Hidden Topic',2,1600000000,0,0,0,1700000000,'testuser',0,3);
 
 CREATE TABLE `phpbb_posts` (
   `post_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
@@ -62,11 +64,13 @@ CREATE TABLE `phpbb_posts` (
   `post_subject` varchar(255) NOT NULL DEFAULT '',
   `bbcode_uid` varchar(8) NOT NULL DEFAULT '',
   `enable_bbcode` tinyint(1) unsigned NOT NULL DEFAULT 1,
+  `post_visibility` tinyint(3) NOT NULL DEFAULT 1,
   PRIMARY KEY (`post_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
-INSERT INTO `phpbb_posts` VALUES (1,1,1,2,1600000000,'Hello [b:abc123]world[/b:abc123]','Test Topic','abc123',1);
-INSERT INTO `phpbb_posts` VALUES (2,1,1,2,1600100000,'A reply','Re: Test Topic','',1);
+INSERT INTO `phpbb_posts` VALUES (1,1,1,2,1600000000,'Hello [b:abc123]world[/b:abc123]','Test Topic','abc123',1,1);
+INSERT INTO `phpbb_posts` VALUES (2,1,1,2,1600100000,'A reply','Re: Test Topic','',1,1);
+INSERT INTO `phpbb_posts` VALUES (3,1,1,2,1600200000,'Needs reapproval after edit','Re: Test Topic','',1,3);
 
 CREATE TABLE `phpbb_attachments` (
   `attach_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
@@ -135,11 +139,28 @@ def test_get_topics(db_path):
     assert topics[0]["topic_title"] == "Test Topic"
 
 
+def test_get_topics_excludes_hidden(db_path):
+    # topic_visibility=3 (needs-reapproval, same as soft-deleted/unapproved
+    # for a public viewer) must never be returned — see phpbb-archive
+    # security review, finding 8.
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    topics = db.get_topics(forum_id=1)
+    assert all(t["topic_id"] != 2 for t in topics)
+
+
 def test_get_posts(db_path):
     db = PhpbbDatabase(db_path, table_prefix="phpbb_")
     posts = db.get_posts(topic_id=1)
     assert len(posts) == 2
     assert "world" in posts[0]["post_text"]
+
+
+def test_get_posts_excludes_hidden(db_path):
+    # post_visibility=3 on an otherwise-visible topic must be excluded —
+    # same finding as above, but per-post rather than per-topic.
+    db = PhpbbDatabase(db_path, table_prefix="phpbb_")
+    posts = db.get_posts(topic_id=1)
+    assert all(p["post_id"] != 3 for p in posts)
 
 
 def test_get_attachments_excludes_private_messages(db_path):
