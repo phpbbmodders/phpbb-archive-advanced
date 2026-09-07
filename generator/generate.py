@@ -208,6 +208,40 @@ def _rewrite_css_imports(css_path: Path) -> None:
     css_path.write_text(content, encoding="utf-8")
 
 
+def copy_avatars(dump_dir: Path, output_dir: Path) -> None:
+    """Copy uploaded avatars and the avatar gallery into output/assets/avatars/.
+    Split out of copy_assets() so a diagnostic mode that only needs to check
+    avatar resolution (-m/--missing-avatars) doesn't also have to copy — and
+    so risk silently overwriting — everything else copy_assets() touches
+    (style.css, favicon, logo, theme CSS, smilies, ranks, attachments) in an
+    --output directory that may already hold a real, customized deployment.
+    See phpbb-archive security review, finding 14."""
+    assets = output_dir / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+
+    # Disk: {hash}_{userid}.ext  DB: {userid}_{timestamp}.ext  Target: {userid}.ext
+    avatars_src = dump_dir / "images" / "avatars" / "upload"
+    if avatars_src.exists():
+        dest = assets / "avatars"
+        dest.mkdir(exist_ok=True)
+        for f in avatars_src.iterdir():
+            if not f.is_file():
+                continue
+            parts = f.stem.rsplit("_", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                shutil.copy2(f, dest / f"{parts[1]}{f.suffix}")
+        logger.info("Copied avatars")
+
+    # Avatar gallery (avatar.driver.local) — DB stores the path relative to
+    # this directory, e.g. "phpbb/gear_red.png".
+    gallery_src = dump_dir / "images" / "avatars" / "gallery"
+    if gallery_src.exists():
+        dest = assets / "avatars" / "gallery"
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(gallery_src, dest, dirs_exist_ok=True)
+        logger.info("Copied avatar gallery")
+
+
 def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: set[str] | None = None,
                  style_css_path: str | None = None,
                  physical_to_real: dict[str, str] | None = None,
@@ -284,28 +318,7 @@ def copy_assets(dump_dir: Path, output_dir: Path, excluded_physical_filenames: s
         shutil.copytree(ranks_src, dest, dirs_exist_ok=True)
         logger.info("Copied rank images")
 
-    # --- Avatars ---
-    # Disk: {hash}_{userid}.ext  DB: {userid}_{timestamp}.ext  Target: {userid}.ext
-    avatars_src = dump_dir / "images" / "avatars" / "upload"
-    if avatars_src.exists():
-        dest = assets / "avatars"
-        dest.mkdir(exist_ok=True)
-        for f in avatars_src.iterdir():
-            if not f.is_file():
-                continue
-            parts = f.stem.rsplit("_", 1)
-            if len(parts) == 2 and parts[1].isdigit():
-                shutil.copy2(f, dest / f"{parts[1]}{f.suffix}")
-        logger.info("Copied avatars")
-
-    # --- Avatar gallery (avatar.driver.local) ---
-    # DB stores the path relative to this directory, e.g. "phpbb/gear_red.png".
-    gallery_src = dump_dir / "images" / "avatars" / "gallery"
-    if gallery_src.exists():
-        dest = assets / "avatars" / "gallery"
-        dest.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(gallery_src, dest, dirs_exist_ok=True)
-        logger.info("Copied avatar gallery")
+    copy_avatars(dump_dir, output_dir)
 
     # --- Attachments ---
     # Some dumps end up with attachment files duplicated inside stray nested
@@ -1485,10 +1498,30 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
                               style_css_path: str | None = None,
                               favicon_path: str | None = None,
                               logo_path: str | None = None,
-                              theme: str = "light") -> tuple[PhpbbDatabase, Path, Path, str, set[int], str, set[str]]:
-    """Shared setup for generate() and find_missing_avatars(): import the
-    dump into SQLite and copy assets/. Returns (db, dump, out, site_name,
-    excluded_forum_ids, db_path, excluded_physical_filenames).
+                              theme: str = "light",
+                              copy_assets_mode: str = "full") -> tuple[PhpbbDatabase, Path, Path, str, set[int], str, set[str]]:
+    """Shared setup for generate() and the diagnostic modes: import the
+    dump into SQLite and, per copy_assets_mode, copy assets/. Returns
+    (db, dump, out, site_name, excluded_forum_ids, db_path,
+    excluded_physical_filenames).
+
+    copy_assets_mode controls what (if anything) gets written into
+    --output, since a diagnostic mode may be pointed at an --output
+    directory a real generate() run already deployed to:
+      - "full": everything copy_assets() does (generate()'s own default).
+      - "avatars": only copy_avatars() — find_missing_avatars() needs
+        existing avatar files on disk to check resolution against, but
+        nothing else (style.css/favicon/logo/theme CSS/smilies/ranks/
+        attachments) should be touched by what's meant to be a read-only
+        check.
+      - "none": no writes to --output at all (list_forums(), check_images()
+        don't render anything, so they don't need assets/ populated).
+    Without this distinction, every diagnostic mode called copy_assets()
+    unconditionally and without --exclude, silently overwriting a real
+    deployment's custom style.css with the default palette and re-copying
+    already-excluded (private-message/excluded-forum) attachments back
+    into a real, possibly-published --output. See phpbb-archive security
+    review, finding 14.
 
     db_path is a system-temp file, not anything under out/ — the imported
     database holds the *entire* dump verbatim (private messages, password
@@ -1496,6 +1529,8 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
     must never sit inside a directory a caller might publish. The caller
     is responsible for deleting it (see cleanup at the end of generate()
     and every diagnostic mode below)."""
+    if copy_assets_mode not in ("full", "avatars", "none"):
+        raise ValueError(f"invalid copy_assets_mode: {copy_assets_mode!r}")
     dump = Path(dump_dir)
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -1532,11 +1567,14 @@ def _open_db_and_copy_assets(dump_dir: str, output_dir: str,
         logger.info("Excluding %d forum(s)/categor(y/ies) from the archive (%d listed, %d after including descendants)",
                     len(excluded_forum_ids), len(seed_ids), len(excluded_forum_ids))
 
-    physical_to_real = {a["physical_filename"]: a["real_filename"] for a in db.get_all_attachments()
-                         if a["physical_filename"] not in excluded_physical_filenames}
-
-    logger.info("Copying assets ...")
-    copy_assets(dump, out, excluded_physical_filenames, style_css_path, physical_to_real, favicon_path, logo_path, theme)
+    if copy_assets_mode == "full":
+        physical_to_real = {a["physical_filename"]: a["real_filename"] for a in db.get_all_attachments()
+                             if a["physical_filename"] not in excluded_physical_filenames}
+        logger.info("Copying assets ...")
+        copy_assets(dump, out, excluded_physical_filenames, style_css_path, physical_to_real, favicon_path, logo_path, theme)
+    elif copy_assets_mode == "avatars":
+        logger.info("Copying avatars ...")
+        copy_avatars(dump, out)
 
     return db, dump, out, site_name, excluded_forum_ids, db_path, excluded_physical_filenames
 
@@ -1821,7 +1859,8 @@ def find_missing_avatars(dump_dir: str, output_dir: str, avatar_overrides_path: 
     generate() does (local files, remote fetches, any existing overrides),
     then list every user whose avatar still doesn't resolve and write a
     starter --avatar-overrides template for them. Does not render the site."""
-    db, dump, out, _site_name, _excluded, db_path, _excluded_files = _open_db_and_copy_assets(dump_dir, output_dir)
+    db, dump, out, _site_name, _excluded, db_path, _excluded_files = _open_db_and_copy_assets(
+        dump_dir, output_dir, copy_assets_mode="avatars")
 
     users = db.get_all_users()
     bad_avatars = find_bad_avatars(users, out)
@@ -1830,7 +1869,17 @@ def find_missing_avatars(dump_dir: str, output_dir: str, avatar_overrides_path: 
     if avatar_overrides_path:
         avatar_overrides = apply_avatar_overrides(load_avatar_overrides(Path(avatar_overrides_path)), out)
 
-    template_path = Path(avatar_overrides_path) if avatar_overrides_path else out / "avatar_overrides.json"
+    # The README's own documented workflow is --avatar-overrides
+    # output/avatar_overrides.json — the exact same path this mode writes
+    # its own starter template to. Re-running -m with --avatar-overrides
+    # already supplied (e.g. to check what's still missing after filling
+    # some in) would silently overwrite that hand-edited file with a
+    # fresh template covering only the still-missing subset, discarding
+    # every mapping already made for a user who's no longer "missing"
+    # because that very override fixed them. Never write to the supplied
+    # input path; use a clearly-distinct name whenever one was given.
+    # See phpbb-archive security review, finding 14.
+    template_path = out / ("avatar_overrides.new.json" if avatar_overrides_path else "avatar_overrides.json")
     report_missing_avatars(users, bad_avatars, remote_avatar_exts, avatar_overrides, template_path)
 
     db.close()
@@ -1841,7 +1890,8 @@ def list_forums(dump_dir: str, output_dir: str) -> None:
     """Diagnostic mode (-l/--list-forums): print every forum/category with
     its forum_id, indented to show nesting, so you know which id(s) to put
     in an --exclude JSON file. Does not render the site."""
-    db, dump, out, _site_name, _excluded, db_path, _excluded_files = _open_db_and_copy_assets(dump_dir, output_dir)
+    db, dump, out, _site_name, _excluded, db_path, _excluded_files = _open_db_and_copy_assets(
+        dump_dir, output_dir, copy_assets_mode="none")
 
     tree = build_forum_tree(db.get_forums())
     type_label = {0: "category", 1: "forum", 2: "link"}
@@ -1864,7 +1914,8 @@ def check_images(dump_dir: str, output_dir: str, url_mirrors_path: str | None = 
     which ones fail to resolve (via any --url-mirrors, or the network) —
     ahead of committing to a full, slow generate() run. Does not render the
     site or write any topic/forum/user pages."""
-    db, dump, out, _site_name, _excluded, db_path, _excluded_files = _open_db_and_copy_assets(dump_dir, output_dir)
+    db, dump, out, _site_name, _excluded, db_path, _excluded_files = _open_db_and_copy_assets(
+        dump_dir, output_dir, copy_assets_mode="none")
 
     users = db.get_all_users()
     forums = db.get_forums()

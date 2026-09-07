@@ -7,6 +7,7 @@ from generator.generate import (
     _nginx_redirects,
     clean_disabled_feature_output,
     copy_assets,
+    copy_avatars,
     find_image_urls,
     process_forum_descs,
     render_redirects,
@@ -380,3 +381,39 @@ class TestProcessForumDescsRespectsPageDepth:
         desc = '<r>More info at <URL url="http://phpbbmodders.net/board/viewtopic.php?f=44&amp;t=12345">here</URL>.</r>'
         result = process_forum_descs([self._forum(desc)], parser)
         assert 'href="../topics/12345.html"' in result[0]["forum_desc"]
+
+
+class TestCopyAvatarsIsolatedFromOtherAssets:
+    # A diagnostic mode (-m/--missing-avatars) needs existing avatar files
+    # on disk to correctly check resolution against, but nothing else —
+    # the old code called the full copy_assets() unconditionally and
+    # without --exclude, silently overwriting a real deployment's custom
+    # style.css with the default palette and re-copying already-excluded
+    # attachments back into a real, possibly-published --output. See
+    # phpbb-archive security review, finding 14.
+
+    def test_copies_uploaded_avatars(self, tmp_path):
+        dump = tmp_path / "dump"
+        (dump / "images" / "avatars" / "upload").mkdir(parents=True)
+        (dump / "images" / "avatars" / "upload" / "abc123_5.png").write_bytes(b"fake avatar")
+        out = tmp_path / "output"
+        copy_avatars(dump, out)
+        assert (out / "assets" / "avatars" / "5.png").read_bytes() == b"fake avatar"
+
+    def test_does_not_touch_style_css_or_other_assets(self, tmp_path):
+        dump = tmp_path / "dump"
+        (dump / "images" / "avatars" / "upload").mkdir(parents=True)
+        out = tmp_path / "output"
+        copy_avatars(dump, out)
+        assert not (out / "assets" / "style.css").exists()
+        assert not (out / "assets" / "attachments").exists()
+
+    def test_full_copy_assets_still_includes_avatars(self, tmp_path):
+        # copy_assets() (the real generate() path) must still get
+        # everything copy_avatars() does — this just moved, not removed.
+        dump = tmp_path / "dump"
+        (dump / "images" / "avatars" / "upload").mkdir(parents=True)
+        (dump / "images" / "avatars" / "upload" / "abc123_5.png").write_bytes(b"fake avatar")
+        out = tmp_path / "output"
+        copy_assets(dump, out)
+        assert (out / "assets" / "avatars" / "5.png").read_bytes() == b"fake avatar"
