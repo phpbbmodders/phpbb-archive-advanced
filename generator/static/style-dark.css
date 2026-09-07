@@ -194,16 +194,10 @@ blockquote .quote-header { font-weight: bold; font-size: 0.9em; color: #A8B4C4; 
 .inline-attachment img { max-width: 100%; }
 .inline-attachment em { display: block; font-style: normal; font-size: 0.8em; color: #9099A6; margin-top: 2px; }
 .attachment-missing { color: #E06C75; font-style: italic; }
-.attachment-ext {
-  display: inline-block;
-  background: #4A5A70;
-  color: #fff;
-  font-size: 0.7em;
-  font-weight: bold;
-  padding: 1px 4px;
-  border-radius: 2px;
-  margin-right: 4px;
+.attachment-icon {
+  color: #9099A6;
   vertical-align: middle;
+  margin-right: 4px;
 }
 
 /* Board-wide announcement (see --announcement) */

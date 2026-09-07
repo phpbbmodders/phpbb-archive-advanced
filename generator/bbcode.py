@@ -13,16 +13,63 @@ logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 
+# Bootstrap Icons (https://icons.getbootstrap.com/, MIT-licensed) — raw path
+# data pulled verbatim from the project's own repo (twbs/icons), 16x16
+# viewBox, fill="currentColor" so CSS controls color (matches --theme
+# dark/light and any --style-css override, same as every other icon-less
+# part of the archive's own CSS).
+_ICON_FILE_ZIP = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="attachment-icon" viewBox="0 0 16 16"><path d="M5 7.5a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v.938l.4 1.599a1 1 0 0 1-.416 1.074l-.93.62a1 1 0 0 1-1.11 0l-.929-.62a1 1 0 0 1-.415-1.074L5 8.438zm2 0H6v.938a1 1 0 0 1-.03.243l-.4 1.598.93.62.929-.62-.4-1.598A1 1 0 0 1 7 8.438z"/><path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5zm-3 0A1.5 1.5 0 0 1 9.5 3V1h-2v1h-1v1h1v1h-1v1h1v1H6V5H5V4h1V3H5V2h1V1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.5z"/></svg>'
+_ICON_FILE_TEXT = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="attachment-icon" viewBox="0 0 16 16"><path d="M5.5 7a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1zM5 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5"/><path d="M9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5zm0 1v2A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"/></svg>'
+_ICON_FILE_PDF = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="attachment-icon" viewBox="0 0 16 16"><path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2M9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5z"/><path d="M4.603 14.087a.8.8 0 0 1-.438-.42c-.195-.388-.13-.776.08-1.102.198-.307.526-.568.897-.787a7.7 7.7 0 0 1 1.482-.645 20 20 0 0 0 1.062-2.227 7.3 7.3 0 0 1-.43-1.295c-.086-.4-.119-.796-.046-1.136.075-.354.274-.672.65-.823.192-.077.4-.12.602-.077a.7.7 0 0 1 .477.365c.088.164.12.356.127.538.007.188-.012.396-.047.614-.084.51-.27 1.134-.52 1.794a11 11 0 0 0 .98 1.686 5.8 5.8 0 0 1 1.334.05c.364.066.734.195.96.465.12.144.193.32.2.518.007.192-.047.382-.138.563a1.04 1.04 0 0 1-.354.416.86.86 0 0 1-.51.138c-.331-.014-.654-.196-.933-.417a5.7 5.7 0 0 1-.911-.95 11.7 11.7 0 0 0-1.997.406 11.3 11.3 0 0 1-1.02 1.51c-.292.35-.609.656-.927.787a.8.8 0 0 1-.58.029m1.379-1.901q-.25.115-.459.238c-.328.194-.541.383-.647.547-.094.145-.096.25-.04.361q.016.032.026.044l.035-.012c.137-.056.355-.235.635-.572a8 8 0 0 0 .45-.606m1.64-1.33a13 13 0 0 1 1.01-.193 12 12 0 0 1-.51-.858 21 21 0 0 1-.5 1.05zm2.446.45q.226.245.435.41c.24.19.407.253.498.256a.1.1 0 0 0 .07-.015.3.3 0 0 0 .094-.125.44.44 0 0 0 .059-.2.1.1 0 0 0-.026-.063c-.052-.062-.2-.152-.518-.209a4 4 0 0 0-.612-.053zM8.078 7.8a7 7 0 0 0 .2-.828q.046-.282.038-.465a.6.6 0 0 0-.032-.198.5.5 0 0 0-.145.04c-.087.035-.158.106-.196.283-.04.192-.03.469.046.822q.036.167.09.346z"/></svg>'
+_ICON_FILE_CODE = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="attachment-icon" viewBox="0 0 16 16"><path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5zm-3 0A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.5z"/><path d="M8.646 6.646a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1 0 .708l-2 2a.5.5 0 0 1-.708-.708L10.293 9 8.646 7.354a.5.5 0 0 1 0-.708m-1.292 0a.5.5 0 0 0-.708 0l-2 2a.5.5 0 0 0 0 .708l2 2a.5.5 0 0 0 .708-.708L5.707 9l1.647-1.646a.5.5 0 0 0 0-.708"/></svg>'
+_ICON_FILE_PLAY = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="attachment-icon" viewBox="0 0 16 16"><path d="M6 6.883v4.234a.5.5 0 0 0 .757.429l3.528-2.117a.5.5 0 0 0 0-.858L6.757 6.454a.5.5 0 0 0-.757.43z"/><path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2M9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5z"/></svg>'
+_ICON_FILE_IMAGE = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="attachment-icon" viewBox="0 0 16 16"><path d="M6.502 7a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3"/><path d="M14 14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5L14 4.5zM4 1a1 1 0 0 0-1 1v10l2.224-2.224a.5.5 0 0 1 .61-.075L8 11l2.157-3.02a.5.5 0 0 1 .76-.063L13 10V4.5h-2A1.5 1.5 0 0 1 9.5 3V1z"/></svg>'
+_ICON_FILE_GENERIC = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="attachment-icon" viewBox="0 0 16 16"><path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5zm-3 0A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.5z"/></svg>'
+
+# Extension → icon, grouped by what each Bootstrap Icon actually depicts
+# rather than one entry per extension. Confirmed real on phpbbmodders.net's
+# own dump: zip/rar dominate non-image attachments, with a handful of txt/
+# pdf/xml/swf/wmv/js/psd — the rest of each group's extensions are included
+# for real-world coverage beyond this one dump, not because they were all
+# individually confirmed present here.
+_EXT_ICONS: dict[str, str] = {
+    **{e: _ICON_FILE_ZIP for e in ("zip", "rar", "7z", "tar", "gz", "bz2", "xz")},
+    **{e: _ICON_FILE_TEXT for e in ("txt", "log", "csv", "rtf", "md")},
+    "pdf": _ICON_FILE_PDF,
+    **{e: _ICON_FILE_CODE for e in (
+        "js", "php", "py", "html", "htm", "css", "json", "xml", "sql",
+        "c", "cpp", "h", "java", "sh", "bat", "yml", "yaml",
+    )},
+    **{e: _ICON_FILE_PLAY for e in (
+        "swf", "wmv", "mp4", "avi", "mov", "mkv", "mp3", "wav", "ogg", "flac",
+    )},
+    **{e: _ICON_FILE_IMAGE for e in ("psd", "ai", "eps", "svg")},
+}
+
 
 def _attachment_ext_badge(filename: str) -> str:
-    """A small extension badge for a non-image attachment link. A bare SQL
-    dump carries no per-filetype icon set (phpBB's own mimetype icons live
-    alongside the software install, not in the database), so this uses the
-    file's own extension rather than a fabricated icon."""
+    """An icon for a non-image attachment link, matched to the file's own
+    extension via Bootstrap Icons (https://icons.getbootstrap.com/, MIT) —
+    a bare SQL dump carries no per-filetype icon set of its own (phpBB's
+    mimetype icons live alongside the software install, not in the
+    database), so this maps extension text to a bundled icon instead of a
+    fabricated/guessed one. Icon-only (no separate text label) since the
+    extension is already visible in the attachment's own filename right
+    next to it; the extension is still present as the icon's <title>, for
+    a hover tooltip and screen readers. An extension not in _EXT_ICONS
+    (including one too long to plausibly be a real extension, e.g. a
+    filename with no real extension at all) falls back to a generic file
+    icon rather than guessing."""
     ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
     if not ext or len(ext) > 5:
         return ""
-    return f'<span class="attachment-ext">{html.escape(ext.upper())}</span> '
+    icon = _EXT_ICONS.get(ext.lower(), _ICON_FILE_GENERIC)
+    icon = icon.replace(
+        'viewBox="0 0 16 16">',
+        f'viewBox="0 0 16 16"><title>{html.escape(ext.upper())}</title>',
+        1,
+    )
+    return f'{icon} '
 
 
 class PhpbbBBCodeParser:

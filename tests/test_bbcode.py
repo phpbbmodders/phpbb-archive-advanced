@@ -1,5 +1,5 @@
 import pytest
-from generator.bbcode import PhpbbBBCodeParser
+from generator.bbcode import PhpbbBBCodeParser, _attachment_ext_badge
 
 
 @pytest.fixture
@@ -246,6 +246,69 @@ class TestAttachments:
             "[attachment=0:abcde]photo.png[/attachment:abcde]", uid="abcde", post_id=1)
         assert result.count('class="inline-attachment"') == 1
         assert "post-attachments" not in result
+
+
+class TestAttachmentExtBadge:
+    # Real, confirmed on phpbbmodders.net's own dump: zip/rar dominate
+    # non-image attachments (176/21 real), with txt/pdf/xml/swf/wmv/js/psd
+    # in small numbers — Bootstrap Icons (MIT), matched to the extension
+    # rather than fabricated, since a bare SQL dump carries no icon set of
+    # its own. Icon-only, no separate text badge — the extension is
+    # already visible in the attachment's own filename right next to it —
+    # with the extension carried as the icon's <title> (hover tooltip +
+    # screen readers) instead.
+
+    def test_zip_gets_zip_icon(self):
+        result = _attachment_ext_badge("mod_package.zip")
+        assert "attachment-icon" in result
+        assert "<title>ZIP</title>" in result
+        assert "attachment-ext" not in result
+
+    def test_rar_gets_zip_icon(self):
+        result = _attachment_ext_badge("backup.rar")
+        assert "attachment-icon" in result
+        assert "<title>RAR</title>" in result
+
+    def test_pdf_gets_pdf_icon(self):
+        result = _attachment_ext_badge("manual.pdf")
+        assert "attachment-icon" in result
+        assert "<title>PDF</title>" in result
+
+    def test_txt_gets_text_icon(self):
+        result = _attachment_ext_badge("readme.txt")
+        assert "attachment-icon" in result
+
+    def test_js_gets_code_icon(self):
+        result = _attachment_ext_badge("script.js")
+        assert "attachment-icon" in result
+
+    def test_wmv_gets_play_icon(self):
+        result = _attachment_ext_badge("clip.wmv")
+        assert "attachment-icon" in result
+
+    def test_psd_gets_image_icon(self):
+        result = _attachment_ext_badge("mockup.psd")
+        assert "attachment-icon" in result
+
+    def test_unknown_extension_gets_generic_icon(self):
+        result = _attachment_ext_badge("data.xyz")
+        assert "attachment-icon" in result
+        assert "<title>XYZ</title>" in result
+
+    def test_overlong_extension_returns_empty(self):
+        # Too long to plausibly be a real extension (e.g. a filename with
+        # no real extension at all, or a stray "." mid-name) — no badge.
+        assert _attachment_ext_badge("data.xyz123") == ""
+
+    def test_no_extension_returns_empty(self):
+        assert _attachment_ext_badge("noextension") == ""
+
+    def test_different_extensions_use_different_icons(self):
+        # Sanity check that the mapping actually varies by extension,
+        # not just always falling back to the same generic icon.
+        zip_result = _attachment_ext_badge("a.zip")
+        pdf_result = _attachment_ext_badge("a.pdf")
+        assert zip_result != pdf_result
 
 
 class TestNesting:
