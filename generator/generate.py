@@ -1335,6 +1335,25 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
              logo_path: str | None = None, logo_url: str | None = None,
              logo_natural_size: bool = False, theme: str = "light") -> None:
     out = Path(output_dir)
+    dump = Path(dump_dir)
+
+    # Validate before doing anything destructive below: a missing dump
+    # would otherwise only surface after --output has already been wiped,
+    # and --output/--dump pointing at overlapping paths (a mistake, or one
+    # accidentally left as the other's default) would delete whichever
+    # directory the wipe below reaches first.
+    if not sorted(dump.glob("*.sql")):
+        raise FileNotFoundError(f"No .sql file found in {dump} — nothing to generate from")
+    out_resolved, dump_resolved = out.resolve(), dump.resolve()
+    if out_resolved == dump_resolved or dump_resolved in out_resolved.parents or out_resolved in dump_resolved.parents:
+        raise ValueError(f"--output ({out}) and --dump ({dump}) must not be the same directory "
+                          "or contain one another")
+
+    # Load now, before --output (which may itself be the file's directory,
+    # per the README's own documented --avatar-overrides output/avatar_
+    # overrides.json workflow) gets wiped by a non-incremental run below.
+    avatar_overrides_entries = load_avatar_overrides(Path(avatar_overrides_path)) if avatar_overrides_path else []
+
     if out.exists():
         if incremental:
             # Keep assets/ (attachments, avatars, external images) so
@@ -1384,7 +1403,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     remote_avatar_exts = download_remote_avatars(list(users.values()), out, url_mirrors, ignored_hosts)
     avatar_overrides = {}
     if avatar_overrides_path:
-        avatar_overrides = apply_avatar_overrides(load_avatar_overrides(Path(avatar_overrides_path)), out)
+        avatar_overrides = apply_avatar_overrides(avatar_overrides_entries, out)
 
     # --- External [img]/<IMG> URLs referenced in posts, sigs, forum descs ---
     # forums is already exclusion-filtered, so forum_desc scanning skips
