@@ -17,7 +17,9 @@ set -Eeuo pipefail
 # recognizing this board's own domains (config/board_hosts.json — the
 # board has used .net/.com/.org at different times) so a post's own
 # viewtopic.php links back to itself get rewritten into the archive
-# regardless of which domain it used when it was written.
+# regardless of which domain it used when it was written, and an
+# apache .htaccess 301-redirecting the live board's old dynamic URLs
+# to this archive's own pages (the live board itself runs on Apache).
 # --incremental keeps previously-downloaded attachments/avatars/external
 # images across runs instead of re-fetching everything.
 #
@@ -47,4 +49,5 @@ fi
     --logo-url https://www.phpbbmodders.com/modders-cog.gif \
     --favicon-url https://phpbbmodders.net/favicon.ico \
     --board-hosts config/board_hosts.json \
+    --redirect-format apache \
     "${extra_args[@]}"
