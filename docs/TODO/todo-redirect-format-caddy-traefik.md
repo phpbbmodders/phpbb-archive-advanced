@@ -26,13 +26,16 @@ including the live isolated-server testing done for both.
 
 Every specific Caddy/Traefik technical claim in the reference doc that
 could be checked against the current official docs has been — see
-citations below. The one claim docs alone couldn't settle (whether a
-query parameter's *value* can actually be read back for use in a
-redirect destination, not just matched) has now also been confirmed
-against a real `caddy` binary (v2.11.4, downloaded straight from
-`caddyserver/caddy`'s GitHub releases) — see "Confirmed by real instance
-test" below. Traefik's `RedirectRegex` still hasn't been runtime-tested
-the same way and should be before it's relied on.
+citations below. Both remaining open questions (Caddy numeric
+validation, Traefik router+`RedirectRegex` end to end) have now also
+been confirmed against real binaries (`caddy` v2.11.4 and `traefik`
+v3.7.12, both downloaded straight from their own GitHub releases) — see
+"Confirmed by real instance test" below. **Docs research and live
+single-instance verification are both done for both servers now** — what's
+left before implementation is the topic/forum *pagination* case
+(alternation-of-real-ids for Caddy/Traefik, per "Requirements" below)
+and the cross-server behavioral-equivalence test suite the reference
+doc calls for, not basic redirect mechanics.
 
 **Confirmed accurate, verbatim or in substance, against current docs:**
 
@@ -110,11 +113,58 @@ the same way and should be before it's relied on.
   the generic topic-only fallback on `query t=*` too** (or equivalent),
   not just match on path — this is a required design constraint now,
   not a hypothetical.
-- Numeric-vs-merely-present validation (matching Apache/nginx's
-  `^[0-9]+$` requirement) was not yet tested — `query t=*` only checks
-  *presence*, same gap the reference doc flagged for the generic
-  renderer-neutral model. Needs a `expression`/CEL check or equivalent
-  before a Caddy renderer matches Apache/nginx's actual guarantee.
+- **Numeric validation confirmed working**, closing the one gap left
+  above: Caddy's `expression` (CEL) matcher can enforce
+  `^[0-9]+$`-equivalent validation directly —
+  ```
+  @valid_t_and_p expression `{http.request.uri.query.t}.matches("^[0-9]+$") && {http.request.uri.query.p}.matches("^[0-9]+$")`
+  redir @valid_t_and_p "/topics/{http.request.uri.query.t}.html?p={http.request.uri.query.p}" permanent
+
+  @valid_t expression `{http.request.uri.query.t}.matches("^[0-9]+$")`
+  redir @valid_t /topics/{http.request.uri.query.t}.html permanent
+  ```
+  Tested live, every case behaves exactly like Apache/nginx: valid
+  `t`+`p` (either order) redirects correctly; valid `t` alone redirects
+  to the topic-only page; `t=abc` (non-numeric) and `p=5756` (no `t` at
+  all — the bug case) both correctly produce **no redirect** (plain 200,
+  no malformed destination); `t` numeric but `p` non-numeric correctly
+  falls through to the topic-only redirect rather than either erroring
+  or building a bad destination. This CEL-`expression` approach — not
+  `query`'s own presence-only matching — is what a real Caddy renderer
+  should use for the generic topic/post case.
+
+**Confirmed by real instance test (`traefik` v3.7.12, official GitHub release binary):**
+
+Tested with a file-provider dynamic config: a `Path` + `QueryRegexp`
+router (numeric validation built into the rule itself, unlike Caddy's
+`query` matcher) with explicit `priority`, chaining two `redirectRegex`
+middlewares — one per `t`/`p` order, since `RedirectRegex` matches the
+raw request URL with a plain regex and has no concept of parsed,
+order-independent query args the way Caddy/nginx do. A middleware whose
+own `regex` doesn't match the URL passes the request through to the
+next one in the chain rather than erroring, which is what makes the
+two-middleware-per-order approach work — mirroring the same "two rules,
+one per argument order" shape Apache's `RewriteCond` already needed for
+the same reason.
+
+- Combined `t`+`p`, either order, plus an unrelated extra parameter, all
+  correctly redirect to `/topics/<t>.html?p=<p>` with the right values —
+  confirmed order-independence and extra-param tolerance, matching
+  Apache/nginx/Caddy.
+- The higher-priority combined-`t`+`p` router (priority 300) correctly
+  outranks the lower-priority topic-only router (priority 200) when
+  both would otherwise match — confirmed Traefik's explicit `priority`
+  field actually governs router selection, not just rule length.
+- `t=abc` (non-numeric) and `p=5756` with no `t` at all (the malformed-
+  destination bug case) both correctly match **no router at all** (plain
+  404, Traefik's own no-route-matched response) rather than building a
+  bad destination — confirmed `QueryRegexp`'s own numeric validation in
+  the router rule is sufficient gating, no separate CEL-equivalent
+  needed on the Traefik side.
+- Not yet tested: forum/`start` pagination and the topic-post-page
+  alternation-of-real-ids case (see "Requirements" below) — the pattern
+  is architecturally identical to what's now proven for the generic
+  topic/post case, but hasn't been run live.
 
 ## Requirements whatever gets built must meet
 
