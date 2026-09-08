@@ -26,16 +26,18 @@ including the live isolated-server testing done for both.
 
 Every specific Caddy/Traefik technical claim in the reference doc that
 could be checked against the current official docs has been — see
-citations below. Both remaining open questions (Caddy numeric
-validation, Traefik router+`RedirectRegex` end to end) have now also
+citations below. Every open runtime question after that (Caddy numeric
+validation, Traefik router+`RedirectRegex` end to end, and both
+servers' topic/post and forum pagination — exact post-ID membership,
+exact `start` offsets, including a real high page number) has since
 been confirmed against real binaries (`caddy` v2.11.4 and `traefik`
 v3.7.12, both downloaded straight from their own GitHub releases) — see
 "Confirmed by real instance test" below. **Docs research and live
-single-instance verification are both done for both servers now** — what's
-left before implementation is the topic/forum *pagination* case
-(alternation-of-real-ids for Caddy/Traefik, per "Requirements" below)
-and the cross-server behavioral-equivalence test suite the reference
-doc calls for, not basic redirect mechanics.
+single-instance verification are both fully done for both servers now,
+pagination included.** What's left before implementation is
+implementation-scale work — the shared redirect model, the actual
+renderers, and the cross-server behavioral-equivalence test suite the
+reference doc calls for — not open research questions.
 
 **Confirmed accurate, verbatim or in substance, against current docs:**
 
@@ -161,10 +163,55 @@ the same reason.
   bad destination — confirmed `QueryRegexp`'s own numeric validation in
   the router rule is sufficient gating, no separate CEL-equivalent
   needed on the Traefik side.
-- Not yet tested: forum/`start` pagination and the topic-post-page
-  alternation-of-real-ids case (see "Requirements" below) — the pattern
-  is architecturally identical to what's now proven for the generic
-  topic/post case, but hasn't been run live.
+**Pagination — confirmed by real instance test, both Caddy and Traefik, using real topic 507's actual page-2 membership (post ids 5756, 5809, 6246, 6409, 6503, 6510) and real forum 125's actual `start` offsets (50→page2, 1000→page21, 2350→page48):**
+
+- **Caddy topic/post exact membership**: `query`'s own multi-value OR
+  semantics handles this directly — `query t=507 p=5756 p=5809 p=6246
+  p=6409 p=6503 p=6510` matches any of those `p` values with that `t`,
+  no CEL needed. Tested live: first post in the set (5756), last post in
+  the set (6510), a post *outside* the set (9999 — correctly falls
+  through to the generic topic+post rule, landing on page 1 as
+  intended, not an error), reversed `p`/`t` order, and an extra `sid`
+  param before/between/after the relevant ones — all correct.
+- **Traefik topic/post exact membership**: `QueryRegexp(`p`,
+  `^(5756|5809|6246|6409|6503|6510)$`)` combined with `Query(`t`,
+  `507`)` in the router rule (priority above the generic topic+post
+  router), with the same two-`RedirectRegex`-per-order chaining already
+  proven for the generic case (the router doesn't expose values to the
+  middleware — the middleware still needs its own regex over the raw
+  URL, alternation and all). Tested live: identical results to Caddy for
+  every case above, including the outside-the-set post falling through
+  to the generic rule correctly.
+- **Caddy forum pagination**: literal `query f=125 start=50` (etc.) per
+  page — no alternation needed since a page's `start` is one exact
+  value. Tested live: page 2, a middle page (21, `start=1000`), and the
+  *highest* real page (48, `start=2350`) all correct — no small-page-
+  count assumption; reversed `start`/`f` order and an extra param both
+  correct; a non-numeric `f` produces no redirect (via the same
+  `expression`/CEL numeric check already proven); a `start` that isn't
+  an actual page boundary (13) correctly falls through to the generic
+  forum rule rather than misfiring.
+- **Traefik forum pagination**: `Query(`f`, `125`) && Query(`start`,
+  `50`)` per page (again, one exact literal value, no alternation) at a
+  priority above the generic forum router (`QueryRegexp(`f`,
+  `^[0-9]+$`)`). Tested live: identical results to Caddy for every case
+  above, including the high page number and the non-boundary-`start`
+  fallthrough.
+
+**What this closes out**: every case in the reference doc's own
+acceptance-criteria list that's testable with a single-instance live
+test — topic/post pagination (exact membership, both argument orders,
+extra params, out-of-set fallthrough), forum pagination (exact offset,
+high page numbers, both argument orders, extra params, invalid-value
+fallthrough), numeric validation, and the original generic topic/post/
+forum cases — has now been run live against real `caddy` and `traefik`
+binaries, not inferred from docs or assumed to generalize from a
+similar-looking case. What's left is implementation-scale work, not
+open research questions: building the actual renderers against a shared
+redirect model (reusing `multi_page_topics`/`multi_page_forums` as the
+single source of truth, not recalculating pagination per renderer), and
+the cross-server behavioral-equivalence test suite the reference doc
+calls for (same input URL, same result, across all four targets).
 
 ## Requirements whatever gets built must meet
 
