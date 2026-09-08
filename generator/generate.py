@@ -2112,7 +2112,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
              attachment_recovery_dir: str | None = None, style_css_path: str | None = None,
              announcement_path: str | None = None, sitemap_url: str | None = None,
              search: bool = False, profile_position: str = "left",
-             pagination_align: str = "left",
+             pagination_align: str = "left", search_position: str = "right",
              favicon_path: str | None = None, favicon_url: str | None = None,
              logo_path: str | None = None, logo_url: str | None = None,
              logo_natural_size: bool = False, theme: str = "light",
@@ -2221,6 +2221,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     env.globals["search_enabled"] = search
     env.globals["profile_position"] = profile_position
     env.globals["pagination_align"] = pagination_align
+    env.globals["search_position"] = search_position
     env.globals["site_desc"] = db.get_config("site_desc") or None
     env.globals["board_index_text"] = db.get_config("board_index_text") or "Board index"
     # phpBB's own admin setting for whether an edited post's "Last edited
@@ -2631,6 +2632,9 @@ def main() -> None:
     parser.add_argument("--pagination-align", choices=["left", "center", "right"], default="left",
                          help="Horizontal alignment of the topic/forum pagination controls "
                               "(Previous/page-number-list/Next). Defaults to left.")
+    parser.add_argument("--search-position", choices=["left", "right"], default="right",
+                         help="Which side of the header's \"Static archive\" line the Search link "
+                              "sits on, when --search is given. Defaults to right.")
     favicon_group = parser.add_mutually_exclusive_group()
     favicon_group.add_argument("--favicon", metavar="FILE",
                          help="Image file (ico/png/svg/...) used as the archive's favicon. Kept "
@@ -2706,7 +2710,7 @@ def main() -> None:
                  args.url_mirrors,
                  args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
                  args.announcement, args.sitemap_url, args.search, args.profile_position,
-                 args.pagination_align,
+                 args.pagination_align, args.search_position,
                  args.favicon, args.favicon_url, args.logo, args.logo_url,
                  args.logo_natural_size, args.theme, args.board_hosts, args.redirect_format,
                  args.redirect_old_prefix, args.regen_light)

@@ -20,8 +20,9 @@
     </div>
   </div>
   <p class="site-desc">
-    {% if search_enabled %}<a href="{{ root }}search.html" class="header-search">Search</a>{% endif %}
+    {% if search_enabled and search_position == "left" %}<a href="{{ root }}search.html" class="header-search">Search</a>{% endif %}
     <span>Static archive</span>
+    {% if search_enabled and search_position == "right" %}<a href="{{ root }}search.html" class="header-search">Search</a>{% endif %}
   </p>
 </div>
 

@@ -52,6 +52,7 @@ usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--announcement FILE] [--sitemap-url URL] [--search]
                    [--profile-position {left,right}]
                    [--pagination-align {left,center,right}]
+                   [--search-position {left,right}]
                    [--favicon FILE | --favicon-url URL]
                    [--logo FILE | --logo-url URL] [--logo-natural-size]
                    [--theme {light,dark}] [--board-hosts FILE]
@@ -174,6 +175,10 @@ options:
                         Horizontal alignment of the topic/forum pagination
                         controls (Previous/page-number-list/Next). Defaults
                         to left.
+  --search-position {left,right}
+                        Which side of the header's "Static archive" line the
+                        Search link sits on, when --search is given. Defaults
+                        to right.
   --favicon FILE        Image file (ico/png/svg/...) used as the archive's
                         favicon. Kept in its original format, copied to
                         output/favicon.<ext>. Omit for no favicon.

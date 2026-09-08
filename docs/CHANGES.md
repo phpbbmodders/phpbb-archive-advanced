@@ -189,6 +189,10 @@ A forum with many pages (forum 125: 48) previously listed every single page numb
 
 `--pagination-align {left,center,right}` (default `left`) controls the control's horizontal alignment, replacing the previously hardcoded centering. The top-of-page instance (before the post/topic list) also gets slightly more bottom margin than the bottom instance, so it doesn't crowd the content directly below it — the two instances are now distinguished with `pagination--top`/`pagination--bottom` modifier classes for exactly this kind of independent styling.
 
+## Header layout: Search position
+
+The header's "Static archive · Search" line was one text block, both parts sitting together on the left. It's now a flex row spanning the header's full width, with "Static archive" on one side and the Search link (when `--search` is given) on the other. `--search-position {left,right}` (default `right`) controls which side Search sits on.
+
 ## Open Graph / Twitter Card meta tags
 
 Every topic page carries `og:title`, `og:type`, `og:site_name`, `og:description` (the opening post's text, stripped of HTML and truncated via Jinja2's built-in `striptags`/`truncate` filters — no new Python code needed), and matching `twitter:*` tags, unconditionally — so a shared topic link shows a real title/preview instead of nothing. `og:description`/`twitter:description` are omitted gracefully when a topic's post content is missing from the dump. `og:url` is the one tag that needs an absolute URL; it reuses `--sitemap-url`'s value rather than introducing a second "what's my base URL" flag, and is simply omitted when that flag isn't set.
