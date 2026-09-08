@@ -22,16 +22,17 @@ Caddy/Traefik instance) before generating something a user might deploy
 without noticing it's wrong — the same bar `apache`/`nginx` were held to,
 including the live isolated-server testing done for both.
 
-## Verification status (docs research done; no real instance tested yet)
+## Verification status
 
 Every specific Caddy/Traefik technical claim in the reference doc that
-could be checked against the current official docs has now been — see
-citations below. This closes the "docs research" half of "Why deferred"
-above; the "testing against a real Caddy/Traefik instance" half (like
-the live isolated-server testing already done for apache/nginx, and the
-live nginx testing that caught two real bugs this project shipped) is
-still outstanding and should happen before generating output real users
-deploy.
+could be checked against the current official docs has been — see
+citations below. The one claim docs alone couldn't settle (whether a
+query parameter's *value* can actually be read back for use in a
+redirect destination, not just matched) has now also been confirmed
+against a real `caddy` binary (v2.11.4, downloaded straight from
+`caddyserver/caddy`'s GitHub releases) — see "Confirmed by real instance
+test" below. Traefik's `RedirectRegex` still hasn't been runtime-tested
+the same way and should be before it's relied on.
 
 **Confirmed accurate, verbatim or in substance, against current docs:**
 
@@ -79,26 +80,41 @@ deploy.
   equivalent to `${1x}`, not `${1}x`").
   ([RedirectRegex reference](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/redirectregex/))
 
-**Not confirmed from docs alone — needs a real instance test:**
+**Confirmed by real instance test (`caddy` v2.11.4, official GitHub release binary):**
 
-- Whether `{http.request.uri.query.<name>}` is real, working Caddy
-  syntax for reading an individual query parameter's *value* (as
-  opposed to just matching it) — needed to build a redirect destination
-  like `/topics/507.html` from `?t=507`, since the `query` matcher
-  itself can't capture. Circumstantial support only: the Caddyfile
-  concepts page lists a `{query.*}` → `{http.request.uri.query.*}` row
-  (the `*` almost certainly stands in for a literal key name, matching
-  how other `.*`-suffixed placeholders in the same table work), and a
-  6-year-old Caddy GitHub issue uses
-  `{http.request.uri.query.version}` as a *desired* example — not
-  confirmed by a maintainer or a current docs page in prose. This is the
-  single most load-bearing unverified claim for the whole Caddy renderer
-  and should be the first thing tested against a real `caddy` binary.
-- Whether Caddy's `expression` (CEL) matcher is a more reliable path to
-  the same goal — extracting and testing `t`/`p` values in one place —
-  than combining `query` (match-only) with a `query.<name>` placeholder
-  (capture, if real). Not evaluated against real docs yet; worth
-  comparing before committing to an approach.
+- `{http.request.uri.query.<name>}` is real and works exactly as hoped:
+  it expands to the actual query parameter's value inside a `redir`
+  destination. `redir /board/viewtopic.php /topics/{http.request.uri.query.t}.html permanent`
+  against a live Caddy instance: `?t=507` → `Location: /topics/507.html`.
+  This was the single most load-bearing unverified claim for the whole
+  Caddy renderer, and it holds up.
+- The combined-`t`-and-`p` case works with a named matcher using
+  `query`'s own AND semantics (already confirmed from docs) plus the
+  value placeholder for the destination — no CEL/`expression` needed:
+  ```
+  @has_t_and_p {
+      query t=* p=*
+  }
+  redir @has_t_and_p "/topics/{http.request.uri.query.t}.html?p={http.request.uri.query.p}" permanent
+  ```
+  Tested live: `?t=507&p=5756` and the reversed `?p=5756&t=507` both
+  produce the identical correct destination (query matching is
+  inherently order-independent, as the docs claimed); an extra unrelated
+  param (`?sid=abc&t=507&p=5756`) doesn't break the match either.
+- **A real Caddy-side counterpart to the nginx `p`-without-`t` bug was
+  found live, the same way the nginx one was**: a generic fallback rule
+  keyed only on the *path* (`redir /board/viewtopic.php /topics/{http.request.uri.query.t}.html permanent`,
+  no `query` guard) builds `/topics/.html` when `t` is absent — tested
+  live with `?p=5756` (no `t` at all): `Location: /topics/.html`, the
+  exact same empty-path-segment defect. **Any Caddy renderer must gate
+  the generic topic-only fallback on `query t=*` too** (or equivalent),
+  not just match on path — this is a required design constraint now,
+  not a hypothetical.
+- Numeric-vs-merely-present validation (matching Apache/nginx's
+  `^[0-9]+$` requirement) was not yet tested — `query t=*` only checks
+  *presence*, same gap the reference doc flagged for the generic
+  renderer-neutral model. Needs a `expression`/CEL check or equivalent
+  before a Caddy renderer matches Apache/nginx's actual guarantee.
 
 ## Requirements whatever gets built must meet
 
