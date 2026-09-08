@@ -17,6 +17,7 @@ from generator.generate import (
     load_exclusions,
     load_password_override,
     paginate_posts,
+    paginate_topics,
     process_forum_descs,
     read_table_prefix,
     render_redirects,
@@ -257,7 +258,16 @@ class TestPaginatedRedirectBlocks:
         # topic 84/post 1331674 vs. topic 8413/post 31674) — must use an
         # explicit non-numeric separator.
         result = _nginx_redirects("", "/", self.MULTI_PAGE_TOPICS)
-        assert '$arg_t:$arg_p ~ "^8413:' in result
+        assert '$topic_page_key ~ "^8413:' in result
+
+    def test_nginx_sets_combined_key_before_testing_it(self):
+        # nginx's `if` only accepts a bare variable as its left-hand
+        # operand — an inline "$arg_t:$arg_p" there silently never
+        # matches (confirmed live against a real nginx instance). The
+        # combined value must be assigned with `set` first.
+        result = _nginx_redirects("", "/", self.MULTI_PAGE_TOPICS)
+        assert 'set $topic_page_key "$arg_t:$arg_p";' in result
+        assert result.index('set $topic_page_key') < result.index('if ($topic_page_key')
 
 
 class TestCleanDisabledFeatureOutput:
@@ -761,3 +771,77 @@ class TestStripTrailingAttachments:
     def test_leaves_html_without_attachments_unchanged(self):
         html = "<p>just text, no attachments</p>"
         assert strip_trailing_attachments(html) == html
+
+
+class TestPaginateTopics:
+    def test_splits_into_page_size_chunks(self):
+        topics = [{"topic_id": i} for i in range(1, 8)]
+        pages = paginate_topics(topics, page_size=3)
+        assert [len(p) for p in pages] == [3, 3, 1]
+
+    def test_single_page_when_under_threshold(self):
+        topics = [{"topic_id": i} for i in range(1, 4)]
+        assert paginate_topics(topics, page_size=50) == [topics]
+
+    def test_empty_forum_still_gets_one_page(self):
+        assert paginate_topics([], page_size=50) == [[]]
+
+    def test_exact_multiple_of_page_size(self):
+        topics = [{"topic_id": i} for i in range(1, 101)]
+        pages = paginate_topics(topics, page_size=50)
+        assert [len(p) for p in pages] == [50, 50]
+
+
+class TestForumPaginatedRedirectBlocks:
+    # A deep link with a start= offset (?f=X&start=Y) into a paginated
+    # forum's topic listing (see FORUM_PAGE_SIZE in generate.py) must land
+    # on that page, not always page 1. Unlike a topic's real, irregular
+    # post ids, a forum page's start offset is an exact, deterministic
+    # multiple of FORUM_PAGE_SIZE (50): page 2 starts at 50, page 3 at 100.
+
+    MULTI_PAGE_FORUMS = {125: 3}  # forum 125, 3 total pages
+
+    def test_apache_no_pagination_data_unchanged(self):
+        assert _apache_redirects("", "/") == _apache_redirects("", "/", None, None)
+
+    def test_apache_emits_page_specific_rules_for_each_page(self):
+        result = _apache_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        assert "forums/125-p2.html?" in result
+        assert "forums/125-p3.html?" in result
+        assert "start=50" in result
+        assert "start=100" in result
+
+    def test_apache_page_rule_comes_before_generic_rule(self):
+        result = _apache_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        specific_pos = result.index("forums/125-p2.html")
+        generic_pos = result.index("forums/%1.html?")
+        assert specific_pos < generic_pos
+
+    def test_apache_handles_both_f_start_orders(self):
+        result = _apache_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        assert result.count("forums/125-p2.html?") == 2
+
+    def test_nginx_no_pagination_data_unchanged(self):
+        assert _nginx_redirects("", "/") == _nginx_redirects("", "/", None, None)
+
+    def test_nginx_emits_page_specific_rules_for_each_page(self):
+        result = _nginx_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        assert '$forum_page_key = "125:50"' in result
+        assert '$forum_page_key = "125:100"' in result
+        assert "forums/125-p2.html" in result
+        assert "forums/125-p3.html" in result
+
+    def test_nginx_sets_combined_key_before_testing_it(self):
+        # nginx's `if` only accepts a bare variable as its left-hand
+        # operand — an inline "$arg_f:$arg_start" there silently never
+        # matches (confirmed live against a real nginx instance). The
+        # combined value must be assigned with `set` first.
+        result = _nginx_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        assert 'set $forum_page_key "$arg_f:$arg_start";' in result
+        assert result.index('set $forum_page_key') < result.index('if ($forum_page_key')
+
+    def test_nginx_page_rule_comes_before_generic_rule(self):
+        result = _nginx_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        specific_pos = result.index("forums/125-p2.html")
+        generic_pos = result.index("forums/$arg_f.html")
+        assert specific_pos < generic_pos

@@ -26,4 +26,18 @@ Ideas not yet built, practical and speculative alike.
   to match an exact alternation of a page's real post ids (a numeric
   min/max range isn't safe with Apache's own lexicographic RewriteCond
   comparisons — verify whether Caddy/Traefik's own condition matching has
-  the same limitation before assuming a range works there).
+  the same limitation before assuming a range works there). Also now
+  needs the equivalent forum-pagination redirect blocks
+  (`_paginated_redirect_blocks_forums_apache`/`_nginx`, `multi_page_forums`
+  from `render_forums()`) — a bookmarked `viewforum.php?f=<id>&start=<N>`
+  beyond page 1 needs the same treatment. Simpler than the topic case: a
+  forum page's `start` offset is an exact, deterministic multiple of
+  `FORUM_PAGE_SIZE`, so a plain literal match per page is enough, no
+  alternation needed. If nginx's own syntax is used as a reference,
+  note that its `if` directive only accepts a bare variable as its
+  left-hand operand — a compound expression like `$arg_f:$arg_start`
+  inline never actually matches (a real, previously-shipped bug in this
+  project's own nginx output, caught and fixed while adding forum
+  pagination — see docs/CHANGES.md). Verify whether Caddy/Traefik's own
+  config languages have an equivalent restriction before assuming a
+  similar inline combination works there.

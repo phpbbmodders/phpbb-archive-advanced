@@ -5,6 +5,54 @@
  &rsaquo; <a href="{{ root }}forums/{{ forum.forum_id }}.html">{{ forum.forum_name | e }}</a>
 {% endblock %}
 
+{% macro pagination_controls() %}
+{% if pagination %}
+<div class="pagination">
+  Pages: {% if pagination.current > 1 %}<a href="{{ root }}forums/{{ pagination.forum_id }}{% if pagination.current > 2 %}-p{{ pagination.current - 1 }}{% endif %}.html">&laquo; Previous</a>{% endif %}
+  {% for p in range(1, pagination.total + 1) %}{% if p == pagination.current %}<strong>{{ p }}</strong>{% else %}<a href="{{ root }}forums/{{ pagination.forum_id }}{% if p > 1 %}-p{{ p }}{% endif %}.html">{{ p }}</a>{% endif %}{% if not loop.last %} {% endif %}{% endfor %}
+  {% if pagination.current < pagination.total %}<a href="{{ root }}forums/{{ pagination.forum_id }}-p{{ pagination.current + 1 }}.html">Next &raquo;</a>{% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro topic_row(topic) %}
+<li class="row">
+  <div class="forum-title">
+    {% if topic.topic_type == 3 %}<span class="topic-flag topic-flag--global">Global Announcement</span>{% elif topic.topic_type == 2 %}<span class="topic-flag topic-flag--announce">Announcement</span>{% elif topic.topic_type == 1 %}<span class="topic-flag topic-flag--sticky">Sticky</span>{% endif %}
+    {% if topic.topic_moved_id %}
+      Moved: <a href="{{ root }}topics/{{ topic.topic_moved_id }}.html">{{ topic.topic_title | e }}</a>
+    {% else %}
+      <a href="{{ root }}topics/{{ topic.topic_id }}.html">{{ topic.topic_title | e }}</a>
+    {% endif %}
+    {% if topic.topic_status == 1 %}<span class="topic-flag topic-flag--locked">Locked</span>{% endif %}
+    <div class="forum-desc">
+      Started by
+      {% if topic.topic_first_poster_name %}
+        {% if topic.topic_poster and topic.topic_poster > 1 %}
+          <a href="{{ root }}users/{{ topic.topic_poster }}.html">{{ topic.topic_first_poster_name | e }}</a>
+        {% else %}
+          {{ topic.topic_first_poster_name | e }}
+        {% endif %}
+      {% else %}
+        Unknown
+      {% endif %}
+      &nbsp;·&nbsp; {{ topic.topic_time | timestamp }}
+      {% if topic.topic_last_poster_name %}
+      &nbsp;·&nbsp; Last:
+      {% if topic.topic_last_poster_id and topic.topic_last_poster_id > 1 %}
+        <a href="{{ root }}users/{{ topic.topic_last_poster_id }}.html">{{ topic.topic_last_poster_name | e }}</a>
+      {% else %}
+        {{ topic.topic_last_poster_name | e }}
+      {% endif %}
+      {{ topic.topic_last_post_time | timestamp }}
+      {% endif %}
+    </div>
+  </div>
+  <span class="col-count">{{ topic.topic_posts_approved }}</span>
+  <span class="col-count">{{ topic.topic_views }}</span>
+</li>
+{% endmacro %}
+
 {% block content %}
 {% if announcement_html %}<div class="announcement">{{ announcement_html | safe }}</div>{% endif %}
 {% if sub_forums %}
@@ -39,6 +87,7 @@
 </div>
 {% endif %}
 {% if not is_category %}
+{{ pagination_controls() }}
 <div class="forumbg">
   <div class="header">
     <span class="header-title">{{ forum.forum_name | e }}</span>
@@ -49,50 +98,16 @@
   </div>
   {% if forum.forum_desc %}<div class="forum-description">{{ forum.forum_desc | safe }}</div>{% endif %}
 
-  {% if topics %}
+  {% if announcements or topics %}
   <ul class="topiclist forums">
-    {% for topic in topics %}
-    <li class="row">
-      <div class="forum-title">
-        {% if topic.topic_type == 3 %}<span class="topic-flag topic-flag--global">Global Announcement</span>{% elif topic.topic_type == 2 %}<span class="topic-flag topic-flag--announce">Announcement</span>{% elif topic.topic_type == 1 %}<span class="topic-flag topic-flag--sticky">Sticky</span>{% endif %}
-        {% if topic.topic_moved_id %}
-          Moved: <a href="{{ root }}topics/{{ topic.topic_moved_id }}.html">{{ topic.topic_title | e }}</a>
-        {% else %}
-          <a href="{{ root }}topics/{{ topic.topic_id }}.html">{{ topic.topic_title | e }}</a>
-        {% endif %}
-        {% if topic.topic_status == 1 %}<span class="topic-flag topic-flag--locked">Locked</span>{% endif %}
-        <div class="forum-desc">
-          Started by
-          {% if topic.topic_first_poster_name %}
-            {% if topic.topic_poster and topic.topic_poster > 1 %}
-              <a href="{{ root }}users/{{ topic.topic_poster }}.html">{{ topic.topic_first_poster_name | e }}</a>
-            {% else %}
-              {{ topic.topic_first_poster_name | e }}
-            {% endif %}
-          {% else %}
-            Unknown
-          {% endif %}
-          &nbsp;·&nbsp; {{ topic.topic_time | timestamp }}
-          {% if topic.topic_last_poster_name %}
-          &nbsp;·&nbsp; Last:
-          {% if topic.topic_last_poster_id and topic.topic_last_poster_id > 1 %}
-            <a href="{{ root }}users/{{ topic.topic_last_poster_id }}.html">{{ topic.topic_last_poster_name | e }}</a>
-          {% else %}
-            {{ topic.topic_last_poster_name | e }}
-          {% endif %}
-          {{ topic.topic_last_post_time | timestamp }}
-          {% endif %}
-        </div>
-      </div>
-      <span class="col-count">{{ topic.topic_posts_approved }}</span>
-      <span class="col-count">{{ topic.topic_views }}</span>
-    </li>
-    {% endfor %}
+    {% for topic in announcements %}{{ topic_row(topic) }}{% endfor %}
+    {% for topic in topics %}{{ topic_row(topic) }}{% endfor %}
   </ul>
   {% else %}
   <div style="padding:8px 10px; color:#999;">No topics in this forum.</div>
   {% endif %}
 </div>
+{{ pagination_controls() }}
 {% else %}
 <div class="forumbg">
   <div class="header">
@@ -103,4 +118,4 @@
 {% endif %}
 {% endblock %}
 
-{% block footer_note %}{% if is_category %}{{ sub_forums | length }} sub-forum(s){% else %}{{ topics | length }} topic(s){% endif %}{% endblock %}
+{% block footer_note %}{% if is_category %}{{ sub_forums | length }} sub-forum(s){% else %}{{ total_topics }} topic(s){% if pagination %} &middot; Page {{ pagination.current }} of {{ pagination.total }}{% endif %}{% endif %}{% endblock %}

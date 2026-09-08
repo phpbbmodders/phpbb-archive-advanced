@@ -1143,9 +1143,10 @@ def humanize_profile_field_label(label: str) -> str:
     return label.title()
 
 
-# Posts per topic page — matches phpbbmodders.net's own real posts_per_page
-# board config at the time this was scoped (confirmed against the dump),
-# not hardcoded from a generic phpBB default.
+# Posts per topic page — deliberately not phpbbmodders.net's own real
+# posts_per_page board config (15, confirmed against the dump): at 15,
+# 443 of ~5,000 real topics would need a second page; 25 drops that to
+# 152 while still keeping any single page reasonably sized.
 TOPIC_PAGE_SIZE = 25
 
 
@@ -1169,6 +1170,26 @@ def paginate_posts(posts: list[dict], page_size: int) -> list[list[dict]]:
     if not posts:
         return [[]]
     return [posts[i:i + page_size] for i in range(0, len(posts), page_size)]
+
+
+# Topics per forum-listing page — matches phpbbmodders.net's own real
+# topics_per_page board config (50, confirmed against the dump). Only
+# normal/sticky topics count against this; announcements and global
+# announcements are shown on every page instead (see render_forums()),
+# matching real phpBB's own viewforum.php: announcements are queried
+# separately and prepended to every page, while stickies share the
+# paginated query with normal topics.
+FORUM_PAGE_SIZE = 50
+
+
+def paginate_topics(topics: list[dict], page_size: int) -> list[list[dict]]:
+    """Split a forum's own normal/sticky topics (already sorted, with
+    announcements already excluded — see render_forums()) into per-page
+    chunks. Always returns at least one (possibly empty) page, so a forum
+    with no such topics still gets its one page rendered."""
+    if not topics:
+        return [[]]
+    return [topics[i:i + page_size] for i in range(0, len(topics), page_size)]
 
 
 # ---------------------------------------------------------------------------
@@ -1255,7 +1276,12 @@ def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
                   users: dict[int, dict], parser: PhpbbBBCodeParser,
                   forums: list[dict], site_name: str = "",
                   announcement_html: str | None = None,
-                  exclude_forum_ids: set[int] | None = None) -> None:
+                  exclude_forum_ids: set[int] | None = None) -> dict[int, int]:
+    """Render all forum pages. Returns {forum_id: total pages} for every
+    forum with more than one page of topics — needed outside this
+    function so an old-URL redirect rule (see _apache_redirects/
+    _nginx_redirects) can send a deep link with a start= offset to its
+    own correct page instead of always page 1."""
     forums_dir = out / "forums"
     forums_dir.mkdir(exist_ok=True)
     tmpl = env.get_template("forum.html")
@@ -1272,48 +1298,69 @@ def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
     # duplicated.
     global_announcements = db.get_global_announcements(exclude_forum_ids)
 
-    def _topic_sort_tier(topic_type: int) -> int:
-        if topic_type in (2, 3):
-            return 0
-        if topic_type == 1:
-            return 1
-        return 2
-
     # Categories (forum_type 0) get a page too — no topics of their own
     # (phpBB doesn't allow posting directly into a category), but a page
     # showing their description and sub-forums, same as a regular forum's
     # Sub-forums section. Link-type forums (2) still get no local page.
     renderable_forums = [f for f in forums if f.get("forum_type") in (0, 1)]
+    multi_page_forums: dict[int, int] = {}
+    total_pages_rendered = 0
     for forum in process_forum_descs(renderable_forums, parser):
         is_category = forum.get("forum_type") == 0
-        topics = []
+        announcements: list[dict] = []
+        paginated_topics: list[dict] = []
         if not is_category:
-            topics = db.get_topics(forum["forum_id"])
+            forum_topics = db.get_topics(forum["forum_id"])
             others_global = [g for g in global_announcements if g["forum_id"] != forum["forum_id"]]
-            if others_global:
-                topics = sorted(
-                    topics + others_global,
-                    key=lambda t: (_topic_sort_tier(t.get("topic_type", 0)), -t["topic_last_post_time"]),
-                )
+
+            # Real phpBB shows announcements/global announcements on every
+            # page of a forum's topic list — queried separately from the
+            # paginated topic query and always prepended (confirmed
+            # against phpBB 3.3.x's own viewforum.php). Stickies, unlike
+            # announcements, share the paginated query with normal topics
+            # and so appear only on the one page they naturally sort into.
+            announcements = sorted(
+                [t for t in forum_topics if t.get("topic_type", 0) in (2, 3)] + others_global,
+                key=lambda t: -t["topic_last_post_time"],
+            )
+            paginated_topics = sorted(
+                [t for t in forum_topics if t.get("topic_type", 0) not in (2, 3)],
+                key=lambda t: (0 if t.get("topic_type", 0) == 1 else 1, -t["topic_last_post_time"]),
+            )
             # Annotate each topic with its starter's username for the template
-            for t in topics:
+            for t in announcements + paginated_topics:
                 poster = users.get(t.get("topic_poster", 0))
                 t["topic_poster_name"] = poster["username"] if poster else ""
 
-        html = tmpl.render(
-            page_title=forum["forum_name"],
-            forum=forum,
-            is_category=is_category,
-            sub_forums=children_by_parent.get(forum["forum_id"], []),
-            topics=topics,
-            assets="../assets",
-            root="../",
-            site_name=site_name,
-            announcement_html=announcement_html,
-        )
-        (forums_dir / f"{forum['forum_id']}.html").write_text(html, encoding="utf-8")
+        pages = paginate_topics(paginated_topics, FORUM_PAGE_SIZE)
+        if len(pages) > 1:
+            multi_page_forums[forum["forum_id"]] = len(pages)
+        total_topics = len(announcements) + len(paginated_topics)
 
-    logger.info("Rendered %d forum pages", len(renderable_forums))
+        for page_num, page_topics in enumerate(pages, start=1):
+            pagination = None
+            if len(pages) > 1:
+                pagination = {"forum_id": forum["forum_id"], "current": page_num, "total": len(pages)}
+            html = tmpl.render(
+                page_title=forum["forum_name"],
+                forum=forum,
+                is_category=is_category,
+                sub_forums=children_by_parent.get(forum["forum_id"], []),
+                announcements=announcements,
+                topics=page_topics,
+                total_topics=total_topics,
+                pagination=pagination,
+                assets="../assets",
+                root="../",
+                site_name=site_name,
+                announcement_html=announcement_html,
+            )
+            filename = f"{forum['forum_id']}.html" if page_num == 1 else f"{forum['forum_id']}-p{page_num}.html"
+            (forums_dir / filename).write_text(html, encoding="utf-8")
+            total_pages_rendered += 1
+
+    logger.info("Rendered %d forum pages", total_pages_rendered)
+    return multi_page_forums
 
 
 def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
@@ -1561,7 +1608,22 @@ def render_sitemap(out: Path, db: PhpbbDatabase, site_url: str, forums: list[dic
     for forum in renderable_forums:
         if forum.get("forum_type") != 1:
             continue
-        for topic in db.get_topics(forum["forum_id"]):
+        forum_topics = db.get_topics(forum["forum_id"])
+
+        # A forum's own listing is split across pages the same way a long
+        # topic's posts are — one sitemap entry per page beyond the first,
+        # so search engines can find them too. Only normal/sticky topics
+        # count against a page (see render_forums()); announcements show
+        # on every page instead, so they're excluded from this count.
+        paginated_topic_count = len(
+            [t for t in forum_topics if t.get("topic_type", 0) not in (2, 3)]
+        )
+        forum_total_pages = -(-paginated_topic_count // FORUM_PAGE_SIZE) or 1
+        forum_lastmod = iso_date(forum.get("forum_last_post_time"))
+        for page_num in range(2, forum_total_pages + 1):
+            urls.append((f"{site_url}forums/{forum['forum_id']}-p{page_num}.html", forum_lastmod))
+
+        for topic in forum_topics:
             lastmod = iso_date(topic.get("topic_last_post_time"))
             urls.append((f"{site_url}topics/{topic['topic_id']}.html", lastmod))
             # topic_posts_approved is the same real post count get_posts()
@@ -1621,8 +1683,38 @@ def _paginated_redirect_blocks_apache(p: str, base_url: str,
     )
 
 
+def _paginated_redirect_blocks_forums_apache(p: str, base_url: str,
+                                              multi_page_forums: dict[int, int] | None) -> str:
+    """One RewriteCond/RewriteRule pair-set per page beyond page 1 of a
+    paginated forum, so a deep link with a start= offset (?f=X&start=Y)
+    lands on that page instead of always page 1 — see FORUM_PAGE_SIZE/
+    paginate_topics() in generate.py. Each page's start offset is an
+    exact, deterministic multiple of FORUM_PAGE_SIZE (unlike a topic's
+    real, irregular post ids), so a plain literal match is enough — no
+    alternation needed."""
+    blocks = []
+    for forum_id, total_pages in sorted((multi_page_forums or {}).items()):
+        for page_num in range(2, total_pages + 1):
+            start = (page_num - 1) * FORUM_PAGE_SIZE
+            target = f"{base_url}forums/{forum_id}-p{page_num}.html?"
+            blocks.append(
+                f"RewriteCond %{{QUERY_STRING}} (?:^|&)f={forum_id}(?:&[^&]*)*&start={start}(?:&|$)\n"
+                f"RewriteRule ^{p}viewforum\\.php$ {target} [R=301,L]\n"
+                f"RewriteCond %{{QUERY_STRING}} (?:^|&)start={start}(?:&[^&]*)*&f={forum_id}(?:&|$)\n"
+                f"RewriteRule ^{p}viewforum\\.php$ {target} [R=301,L]"
+            )
+    if not blocks:
+        return ""
+    return (
+        "\n# Deep links into a specific page of a paginated forum — one\n"
+        "# block per page beyond page 1, checked before the generic rule\n"
+        "# below so a more specific match wins.\n" + "\n".join(blocks) + "\n"
+    )
+
+
 def _apache_redirects(old_prefix: str, base_url: str,
-                       multi_page_topics: dict[int, list[list[int]]] | None = None) -> str:
+                       multi_page_topics: dict[int, list[list[int]]] | None = None,
+                       multi_page_forums: dict[int, int] | None = None) -> str:
     """old_prefix: the live board's own script path (e.g. "board" for a
     board installed at .../board/viewtopic.php), no leading/trailing
     slash, "" if it was installed at the web root. base_url: where this
@@ -1632,9 +1724,12 @@ def _apache_redirects(old_prefix: str, base_url: str,
     target would otherwise resolve against wherever the rule itself
     runs, not necessarily where the archive actually is). multi_page_topics
     (from render_topics()) generates extra page-specific rules for a topic
-    split across multiple pages — see _paginated_redirect_blocks_apache."""
+    split across multiple pages — see _paginated_redirect_blocks_apache.
+    multi_page_forums (from render_forums()) does the same for a forum's
+    own paginated topic listing — see _paginated_redirect_blocks_forums_apache."""
     p = f"{old_prefix}/" if old_prefix else ""
     page_rules = _paginated_redirect_blocks_apache(p, base_url, multi_page_topics)
+    forum_page_rules = _paginated_redirect_blocks_forums_apache(p, base_url, multi_page_forums)
     return f"""\
 # Redirects the live phpBB board's old dynamic URLs to this static
 # archive's own pages. Generated by phpbb-archive's --redirect-format
@@ -1657,7 +1752,7 @@ RewriteRule ^{p}viewtopic\\.php$ {base_url}topics/%2.html#p%1? [NE,R=301,L]
 # {p}viewtopic.php?...t=<id>[...] (no specific post) -> {base_url}topics/<id>.html
 RewriteCond %{{QUERY_STRING}} (?:^|&)t=([0-9]+)
 RewriteRule ^{p}viewtopic\\.php$ {base_url}topics/%1.html? [R=301,L]
-
+{forum_page_rules}
 # {p}viewforum.php?...f=<id>[...] -> {base_url}forums/<id>.html
 RewriteCond %{{QUERY_STRING}} (?:^|&)f=([0-9]+)
 RewriteRule ^{p}viewforum\\.php$ {base_url}forums/%1.html? [R=301,L]
@@ -1675,24 +1770,63 @@ def _paginated_redirect_blocks_nginx(base_url: str,
     instead of always page 1 — see TOPIC_PAGE_SIZE/compute_post_pages() in
     generate.py. nginx's $arg_t/$arg_p already parse the query string by
     name regardless of argument order (unlike Apache's %{QUERY_STRING}
-    regex matching, which needs a separate rule per t=/p= order) — matched
-    here as "$arg_t:$arg_p" (a literal ":" separator that can't appear in
-    either value) against "^<topic_id>:(<id>|<id>|...)$" so a topic/post
+    regex matching, which needs a separate rule per t=/p= order) — tested
+    together as "$arg_t:$arg_p" (a literal ":" separator that can't appear
+    in either value) against "^<topic_id>:(<id>|<id>|...)$" so a topic/post
     id pair can never be misread as a different pair purely from digit
-    concatenation (e.g. topic 84/post 1331674 vs. topic 8413/post 31674)."""
+    concatenation (e.g. topic 84/post 1331674 vs. topic 8413/post 31674).
+    nginx's `if` only accepts a bare variable (or a file-test operator) as
+    its left-hand operand, not an inline compound expression like
+    "$arg_t:$arg_p" — confirmed live: an `if` built that way never matches,
+    silently falling through to the generic rule every time — so the
+    combined value is assigned to $topic_page_key with `set` first, and
+    every `if` below tests that variable instead."""
     blocks = []
     for topic_id, pages in sorted((multi_page_topics or {}).items()):
         for page_num, post_ids in enumerate(pages[1:], start=2):
             ids_alt = "|".join(str(i) for i in post_ids)
             blocks.append(
-                f'    if ($arg_t:$arg_p ~ "^{topic_id}:({ids_alt})$") {{\n'
+                f'    if ($topic_page_key ~ "^{topic_id}:({ids_alt})$") {{\n'
                 f"        return 301 {base_url}topics/{topic_id}-p{page_num}.html#p$arg_p;\n"
                 f"    }}"
             )
     if not blocks:
         return ""
     return (
-        "\n    # Deep links into a specific page of a paginated topic —\n"
+        '\n    set $topic_page_key "$arg_t:$arg_p";\n'
+        "    # Deep links into a specific page of a paginated topic —\n"
+        "    # one block per page beyond page 1, checked before the\n"
+        "    # generic rule below so a more specific match wins.\n" +
+        "\n".join(blocks) + "\n"
+    )
+
+
+def _paginated_redirect_blocks_forums_nginx(base_url: str,
+                                             multi_page_forums: dict[int, int] | None) -> str:
+    """One `if` block per page beyond page 1 of a paginated forum, so a
+    deep link with a start= offset (?f=X&start=Y) lands on that page
+    instead of always page 1 — see FORUM_PAGE_SIZE/paginate_topics() in
+    generate.py. Each page's start offset is an exact, deterministic
+    multiple of FORUM_PAGE_SIZE, tested the same way as the topic case
+    (via a $forum_page_key set to "$arg_f:$arg_start" — see
+    _paginated_redirect_blocks_nginx for why nginx needs the extra `set`
+    rather than testing the compound expression inline) but with a plain
+    "=" equality check rather than a regex alternation, since there's
+    exactly one valid start per page."""
+    blocks = []
+    for forum_id, total_pages in sorted((multi_page_forums or {}).items()):
+        for page_num in range(2, total_pages + 1):
+            start = (page_num - 1) * FORUM_PAGE_SIZE
+            blocks.append(
+                f'    if ($forum_page_key = "{forum_id}:{start}") {{\n'
+                f"        return 301 {base_url}forums/{forum_id}-p{page_num}.html;\n"
+                f"    }}"
+            )
+    if not blocks:
+        return ""
+    return (
+        '\n    set $forum_page_key "$arg_f:$arg_start";\n'
+        "    # Deep links into a specific page of a paginated forum —\n"
         "    # one block per page beyond page 1, checked before the\n"
         "    # generic rule below so a more specific match wins.\n" +
         "\n".join(blocks) + "\n"
@@ -1700,10 +1834,12 @@ def _paginated_redirect_blocks_nginx(base_url: str,
 
 
 def _nginx_redirects(old_prefix: str, base_url: str,
-                      multi_page_topics: dict[int, list[list[int]]] | None = None) -> str:
+                      multi_page_topics: dict[int, list[list[int]]] | None = None,
+                      multi_page_forums: dict[int, int] | None = None) -> str:
     """Same parameters as _apache_redirects."""
     p = f"/{old_prefix}" if old_prefix else ""
     page_rules = _paginated_redirect_blocks_nginx(base_url, multi_page_topics)
+    forum_page_rules = _paginated_redirect_blocks_forums_nginx(base_url, multi_page_forums)
     return f"""\
 # Redirects the live phpBB board's old dynamic URLs to this static
 # archive's own pages. Generated by phpbb-archive's --redirect-format
@@ -1724,6 +1860,7 @@ location = {p}/viewtopic.php {{
 }}
 
 location = {p}/viewforum.php {{
+{forum_page_rules}
     if ($arg_f) {{
         return 301 {base_url}forums/$arg_f.html;
     }}
@@ -1744,7 +1881,8 @@ _REDIRECT_FORMATS = {
 
 
 def render_redirects(out: Path, redirect_format: str, old_prefix: str, base_url: str,
-                      multi_page_topics: dict[int, list[list[int]]] | None = None) -> None:
+                      multi_page_topics: dict[int, list[list[int]]] | None = None,
+                      multi_page_forums: dict[int, int] | None = None) -> None:
     """Write a server-config snippet (output/.htaccess for apache,
     output/nginx-redirects.conf for nginx) that 301-redirects the old
     live board's dynamic URLs (viewtopic.php/viewforum.php/memberlist.php)
@@ -1753,13 +1891,18 @@ def render_redirects(out: Path, redirect_format: str, old_prefix: str, base_url:
     generic rule per old script, driven by whatever id is actually in
     the incoming request — not a per-topic/forum/user list — so this
     stays small and doesn't need regenerating just because the archive's
-    content changes, only if its own URL layout does; the one exception is
-    multi_page_topics (from render_topics()), which does add one small
-    rule block per page of a paginated topic, so a deep link to a specific
-    post lands on its own actual page rather than always page 1. See
-    _apache_redirects for old_prefix/base_url."""
+    content changes, only if its own URL layout does; the exceptions are
+    multi_page_topics (from render_topics()), which adds one small rule
+    block per page of a paginated topic so a deep link to a specific post
+    lands on its own actual page rather than always page 1, and
+    multi_page_forums (from render_forums()), which does the same for a
+    deep link into a specific page of a forum's own paginated topic
+    listing (a start= offset). See _apache_redirects for old_prefix/
+    base_url."""
     filename, render = _REDIRECT_FORMATS[redirect_format]
-    (out / filename).write_text(render(old_prefix, base_url, multi_page_topics), encoding="utf-8")
+    (out / filename).write_text(
+        render(old_prefix, base_url, multi_page_topics, multi_page_forums), encoding="utf-8"
+    )
     logger.info("Rendered %s (%s redirects)", filename, redirect_format)
 
 
@@ -2155,7 +2298,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
 
     # --- Pages ---
     forum_tree = prune_empty_categories(build_forum_tree(process_forum_descs(forums, shared_parser)))
-    render_forums(env, out, db, users, shared_parser_nested, forums, site_name=site_name, announcement_html=announcement_html_nested, exclude_forum_ids=excluded_forum_ids)
+    multi_page_forums = render_forums(env, out, db, users, shared_parser_nested, forums, site_name=site_name, announcement_html=announcement_html_nested, exclude_forum_ids=excluded_forum_ids)
     render_users(env, out, db, smilies, ranks, custom_bbcodes, bad_avatars, remote_avatar_exts, avatar_overrides, external_images, internal_topic_ids, bad_smilies, board_hosts, site_name=site_name, post_id_to_page=post_id_to_page)
     render_index(env, out, forum_tree or [], total_posts, len(internal_topic_ids), len(users), site_name=site_name, announcement_html=announcement_html)
 
@@ -2176,7 +2319,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
         old_prefix = redirect_old_prefix if redirect_old_prefix is not None else db.get_config("script_path")
         old_prefix = (old_prefix or "").strip("/")
         redirect_base_url = site_url if site_url else "/"
-        render_redirects(out, redirect_format, old_prefix, redirect_base_url, multi_page_topics)
+        render_redirects(out, redirect_format, old_prefix, redirect_base_url, multi_page_topics, multi_page_forums)
 
     if search:
         render_search(env, out, site_name=site_name)
