@@ -29,7 +29,7 @@ hr { border: 0; border-top: 1px solid #B3C0D8; }
 #page-header h1 a { color: #fff; }
 #page-header h1 a:hover { text-decoration: none; color: #D1E8FF; }
 #page-header .site-tagline { color: #D1E8FF; font-size: 0.95em; font-style: italic; margin: 0; }
-#page-header .site-desc { color: #A8C4E0; font-size: 0.9em; margin: 8px 0 0; }
+#page-header .site-desc { display: flex; justify-content: space-between; align-items: baseline; color: #A8C4E0; font-size: 0.9em; margin: 8px 0 0; }
 #page-header .site-desc a.header-search { color: #fff; }
 #page-header .site-desc a.header-search:hover { text-decoration: none; color: #D1E8FF; }
 
