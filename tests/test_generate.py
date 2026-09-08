@@ -15,6 +15,7 @@ from generator.generate import (
     find_image_urls,
     humanize_profile_field_label,
     load_exclusions,
+    load_password_override,
     paginate_posts,
     process_forum_descs,
     read_table_prefix,
@@ -708,6 +709,29 @@ class TestLoadExclusions:
         path.write_text('{"categories": [], "forums": [52, "o52"]}', encoding="utf-8")
         try:
             load_exclusions(path)
+            assert False, "expected ValueError"
+        except ValueError as e:
+            assert str(path) in str(e)
+            assert "forums" in str(e)
+            assert "o52" in str(e)
+
+
+class TestLoadPasswordOverride:
+    def test_loads_forums(self, tmp_path):
+        path = tmp_path / "password_override.json"
+        path.write_text('{"forums": [10, 20]}', encoding="utf-8")
+        assert load_password_override(path) == {10, 20}
+
+    def test_string_ids_are_coerced_to_int(self, tmp_path):
+        path = tmp_path / "password_override.json"
+        path.write_text('{"forums": ["5"]}', encoding="utf-8")
+        assert load_password_override(path) == {5}
+
+    def test_invalid_id_raises_error_naming_file_and_key(self, tmp_path):
+        path = tmp_path / "password_override.json"
+        path.write_text('{"forums": [52, "o52"]}', encoding="utf-8")
+        try:
+            load_password_override(path)
             assert False, "expected ValueError"
         except ValueError as e:
             assert str(path) in str(e)

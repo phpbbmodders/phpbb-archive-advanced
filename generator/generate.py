@@ -155,7 +155,13 @@ def load_password_override(path: Path) -> set[int]:
     this, every password-protected forum is auto-excluded by default (see
     generate()/_open_db_and_copy_assets())."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    return {int(i) for i in data.get("forums", [])}
+    ids: set[int] = set()
+    for i in data.get("forums", []):
+        try:
+            ids.add(int(i))
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"--password-override {path}: invalid id in 'forums': {i!r}") from e
+    return ids
 
 
 def expand_exclusions_recursively(seed_ids: set[int], all_forums: list[dict]) -> set[int]:
