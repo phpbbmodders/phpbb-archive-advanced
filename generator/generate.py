@@ -1836,7 +1836,14 @@ def _paginated_redirect_blocks_forums_nginx(base_url: str,
 def _nginx_redirects(old_prefix: str, base_url: str,
                       multi_page_topics: dict[int, list[list[int]]] | None = None,
                       multi_page_forums: dict[int, int] | None = None) -> str:
-    """Same parameters as _apache_redirects."""
+    """Same parameters as _apache_redirects. The generic viewtopic.php
+    rule requires $arg_t itself to be present and numeric (via a
+    $topic_post_key combining it with $arg_p, same technique as
+    _paginated_redirect_blocks_nginx — see that function for why nginx's
+    `if` needs the extra `set`) rather than checking $arg_p and using
+    $arg_t unchecked: a request carrying only p (e.g. ?p=123, no t at
+    all) would otherwise build a broken "/topics/.html#p123" destination
+    — a real, confirmed-live bug in an earlier version of this rule."""
     p = f"/{old_prefix}" if old_prefix else ""
     page_rules = _paginated_redirect_blocks_nginx(base_url, multi_page_topics)
     forum_page_rules = _paginated_redirect_blocks_forums_nginx(base_url, multi_page_forums)
@@ -1851,10 +1858,11 @@ def _nginx_redirects(old_prefix: str, base_url: str,
 
 location = {p}/viewtopic.php {{
 {page_rules}
-    if ($arg_p) {{
-        return 301 {base_url}topics/$arg_t.html#p$arg_p;
+    set $topic_post_key "$arg_t:$arg_p";
+    if ($topic_post_key ~ "^([0-9]+):([0-9]+)$") {{
+        return 301 {base_url}topics/$1.html#p$2;
     }}
-    if ($arg_t) {{
+    if ($arg_t ~ "^[0-9]+$") {{
         return 301 {base_url}topics/$arg_t.html;
     }}
 }}

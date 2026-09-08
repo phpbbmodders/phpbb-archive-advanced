@@ -178,7 +178,7 @@ class TestRedirectGeneration:
     def test_nginx_no_prefix_relative_base(self):
         result = _nginx_redirects("", "/")
         assert "location = /viewtopic.php {" in result
-        assert "return 301 /topics/$arg_t.html#p$arg_p;" in result
+        assert "return 301 /topics/$1.html#p$2;" in result
         assert "location = /viewforum.php {" in result
         assert "location = /memberlist.php {" in result
 
@@ -190,7 +190,20 @@ class TestRedirectGeneration:
 
     def test_nginx_absolute_base_url(self):
         result = _nginx_redirects("", "https://archive.example.com/")
-        assert "return 301 https://archive.example.com/topics/$arg_t.html#p$arg_p;" in result
+        assert "return 301 https://archive.example.com/topics/$1.html#p$2;" in result
+
+    def test_nginx_generic_topic_post_requires_both_numeric(self):
+        # A malformed request with p but no t must not fall through to
+        # the generic rule and build a broken destination like
+        # "/topics/.html#p123" — confirmed live against a real nginx
+        # instance: the previous "if ($arg_p) { .../topics/$arg_t.html#
+        # p$arg_p; }" checked $arg_p's presence but used $arg_t in the
+        # destination without checking it at all.
+        result = _nginx_redirects("", "/")
+        assert 'set $topic_post_key "$arg_t:$arg_p";' in result
+        assert 'if ($topic_post_key ~ "^([0-9]+):([0-9]+)$")' in result
+        assert 'if ($arg_t ~ "^[0-9]+$")' in result
+        assert "$arg_t.html#p$arg_p" not in result
 
     def test_render_redirects_apache_writes_htaccess(self, tmp_path):
         render_redirects(tmp_path, "apache", "board", "/")
