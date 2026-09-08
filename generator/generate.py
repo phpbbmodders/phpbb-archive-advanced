@@ -39,20 +39,30 @@ def format_timestamp(ts: int | None) -> str:
     """Format a Unix timestamp as a human-readable date string (UTC)."""
     if not ts:
         return ""
-    dt = datetime.datetime.utcfromtimestamp(ts)
+    dt = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
     return dt.strftime("%a %b %d, %Y %H:%M UTC")
+
+
+_TRAILING_ATTACHMENTS_BLOCK_RE = re.compile(r'\s*<div class="post-attachments">.*</div>\s*$', re.DOTALL)
+
+
+def strip_trailing_attachments(rendered_html: str) -> str:
+    """Remove the trailing attachments block (see
+    PhpbbBBCodeParser._append_trailing_attachments, always the last thing
+    appended) from a post's rendered HTML, for building an
+    og:description/twitter:description summary — without this, an
+    attachment-only post's meta description is just the literal
+    "Attachment: filename.ext" text instead of the post's own content."""
+    return _TRAILING_ATTACHMENTS_BLOCK_RE.sub("", rendered_html)
 
 
 def read_table_prefix(config_path: Path) -> str:
     """Extract $table_prefix from phpBB's config.php."""
     try:
         content = config_path.read_text(encoding="utf-8", errors="replace")
-        match = re.search(r"\\\$table_prefix\s*=\s*'([^']+)'|\\$table_prefix\s*=\s*'([^']+)'", content)
-        if not match:
-            # Try without backslash escaping
-            match = re.search(r"""\$table_prefix\s*=\s*['"]([^'"]+)['"]""", content)
+        match = re.search(r"""\$table_prefix\s*=\s*['"]([^'"]+)['"]""", content)
         if match:
-            return next(g for g in match.groups() if g) if match.lastindex and match.lastindex > 1 else match.group(1)
+            return match.group(1)
     except FileNotFoundError:
         pass
     logger.warning("Could not read table prefix from config.php, using 'phpbb_'")
@@ -128,7 +138,14 @@ def load_exclusions(path: Path) -> set[int]:
     set — expand_exclusions_recursively() pulls in every descendant too, so
     only the top-level thing you want hidden needs to be listed here."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    return {int(i) for i in data.get("categories", [])} | {int(i) for i in data.get("forums", [])}
+    ids: set[int] = set()
+    for key in ("categories", "forums"):
+        for i in data.get(key, []):
+            try:
+                ids.add(int(i))
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"--exclude {path}: invalid id in {key!r}: {i!r}") from e
+    return ids
 
 
 def load_password_override(path: Path) -> set[int]:
@@ -482,8 +499,7 @@ def _attachment_is_valid(path: Path, real_filename: str) -> bool:
         except Exception:
             return False
     if lower.endswith(".rar"):
-        import shutil as _shutil
-        if not _shutil.which("7z"):
+        if not shutil.which("7z"):
             return True
         try:
             result = subprocess.run(["7z", "t", str(path)], capture_output=True, text=True, timeout=30)
@@ -1192,6 +1208,7 @@ def build_jinja_env(template_dir: Path) -> jinja2.Environment:
         autoescape=jinja2.select_autoescape(["html"]),
     )
     env.filters["timestamp"] = format_timestamp
+    env.filters["strip_trailing_attachments"] = strip_trailing_attachments
     return env
 
 
@@ -1521,7 +1538,7 @@ def render_sitemap(out: Path, db: PhpbbDatabase, site_url: str, forums: list[dic
     def iso_date(ts: int | None) -> str | None:
         if not ts:
             return None
-        return datetime.datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d")
+        return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%d")
 
     urls: list[tuple[str, str | None]] = []
 

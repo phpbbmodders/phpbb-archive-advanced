@@ -5,11 +5,11 @@
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="{{ site_name }}">
 <meta property="og:title" content="{{ page_title }} - {{ site_name }}">
-{% if posts %}<meta property="og:description" content="{{ posts[0].rendered_html | striptags | truncate(200) }}">{% endif %}
+{% if posts %}<meta property="og:description" content="{{ posts[0].rendered_html | strip_trailing_attachments | striptags | truncate(200) }}">{% endif %}
 {% if site_url %}<meta property="og:url" content="{{ site_url }}topics/{{ topic.topic_id }}{% if pagination and pagination.current > 1 %}-p{{ pagination.current }}{% endif %}.html">{% endif %}
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="{{ page_title }} - {{ site_name }}">
-{% if posts %}<meta name="twitter:description" content="{{ posts[0].rendered_html | striptags | truncate(200) }}">{% endif %}
+{% if posts %}<meta name="twitter:description" content="{{ posts[0].rendered_html | strip_trailing_attachments | striptags | truncate(200) }}">{% endif %}
 {% endblock %}
 
 {% block breadcrumb %}

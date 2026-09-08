@@ -14,9 +14,12 @@ from generator.generate import (
     download_remote_avatars,
     find_image_urls,
     humanize_profile_field_label,
+    load_exclusions,
     paginate_posts,
     process_forum_descs,
+    read_table_prefix,
     render_redirects,
+    strip_trailing_attachments,
 )
 
 
@@ -662,3 +665,75 @@ class TestComputePostPages:
         }
         result = compute_post_pages(topic_posts, page_size=25)
         assert result == {100: 1, 101: 1, 200: 1, 201: 1}
+
+
+class TestReadTablePrefix:
+    def test_single_quoted_value(self, tmp_path):
+        config = tmp_path / "config.php"
+        config.write_text("<?php\n$table_prefix = 'phpbb_';\n", encoding="utf-8")
+        assert read_table_prefix(config) == "phpbb_"
+
+    def test_double_quoted_value(self, tmp_path):
+        config = tmp_path / "config.php"
+        config.write_text('<?php\n$table_prefix = "phpbb_";\n', encoding="utf-8")
+        assert read_table_prefix(config) == "phpbb_"
+
+    def test_custom_prefix(self, tmp_path):
+        config = tmp_path / "config.php"
+        config.write_text("<?php\n$table_prefix = 'forum_';\n", encoding="utf-8")
+        assert read_table_prefix(config) == "forum_"
+
+    def test_missing_file_falls_back_to_default(self, tmp_path):
+        assert read_table_prefix(tmp_path / "does_not_exist.php") == "phpbb_"
+
+    def test_no_matching_line_falls_back_to_default(self, tmp_path):
+        config = tmp_path / "config.php"
+        config.write_text("<?php\n// nothing relevant here\n", encoding="utf-8")
+        assert read_table_prefix(config) == "phpbb_"
+
+
+class TestLoadExclusions:
+    def test_loads_categories_and_forums(self, tmp_path):
+        path = tmp_path / "exclude.json"
+        path.write_text('{"categories": [1, 2], "forums": [10]}', encoding="utf-8")
+        assert load_exclusions(path) == {1, 2, 10}
+
+    def test_string_ids_are_coerced_to_int(self, tmp_path):
+        path = tmp_path / "exclude.json"
+        path.write_text('{"categories": ["5"], "forums": []}', encoding="utf-8")
+        assert load_exclusions(path) == {5}
+
+    def test_invalid_id_raises_error_naming_file_and_key(self, tmp_path):
+        path = tmp_path / "exclude.json"
+        path.write_text('{"categories": [], "forums": [52, "o52"]}', encoding="utf-8")
+        try:
+            load_exclusions(path)
+            assert False, "expected ValueError"
+        except ValueError as e:
+            assert str(path) in str(e)
+            assert "forums" in str(e)
+            assert "o52" in str(e)
+
+
+class TestStripTrailingAttachments:
+    def test_removes_trailing_image_attachment_block(self):
+        html = (
+            "<p>hello</p>"
+            '\n<div class="post-attachments">'
+            '<div class="inline-attachment">'
+            '<a href="x"><img src="x" alt="a.png" loading="lazy" /></a>'
+            "<br/><em>Attachment: a.png</em></div></div>"
+        )
+        assert strip_trailing_attachments(html) == "<p>hello</p>"
+
+    def test_removes_trailing_non_image_attachment_block(self):
+        html = (
+            "<p>see attached</p>"
+            '\n<div class="post-attachments">'
+            '<div class="inline-attachment">badge<a href="x">Attachment: a.zip</a></div></div>'
+        )
+        assert strip_trailing_attachments(html) == "<p>see attached</p>"
+
+    def test_leaves_html_without_attachments_unchanged(self):
+        html = "<p>just text, no attachments</p>"
+        assert strip_trailing_attachments(html) == html

@@ -14,6 +14,14 @@ set -Eeuo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 port="${1:-8000}"
+output_dir="$script_dir/output"
 
-cd "$script_dir/output"
+if [[ ! -d "$output_dir" ]]; then
+    echo "ERROR: output directory not found:" >&2
+    echo "  $output_dir" >&2
+    echo "Run ./run.sh (or generate.sh) first." >&2
+    exit 1
+fi
+
+cd "$output_dir"
 python3 -m http.server "$port"
