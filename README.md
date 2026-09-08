@@ -1,8 +1,8 @@
-# phpbb-archive — static site generator for phpBB forums
+# phpbb-archive-advanced
 
-phpbb-archive converts a phpBB 3.x MySQL dump into a self-contained static HTML archive. No server required — the output is plain files you can host anywhere (GitHub Pages, Neocities, nginx, etc.).
+A static HTML archive generator for phpBB 3.x forums. Converts a phpBB MySQL dump into a self-contained set of static pages — no server required, no database at runtime — that you can host anywhere (GitHub Pages, Neocities, nginx, etc.) as a permanent, read-only record of a board.
 
-This repo is a deployment of the tool for phpbbmodders.net — `./run.sh` wires every flag below to this board's own `config/` files in one command. See [`docs/SITE_SETUP.md`](docs/SITE_SETUP.md) for what each of those files is and does.
+This is an advanced fork of [matildepark/phpbb-archive](https://github.com/matildepark/phpbb-archive) — see [Acknowledgments](#acknowledgments) below for what's changed. A real deployment typically wires the flags below into a small wrapper script pointing at your own config files; see the worked examples throughout this README.
 
 ### What you need
 
@@ -308,53 +308,57 @@ Run `-i`/`--check-images` first to see which URLs currently fail to resolve, so 
 `-l`/`-m`/`-i` inspect the dump before you generate; `-c`/`--check-links` inspects the archive after — it needs a real `output/` to scan, so run it once you have a build:
 
 ```bash
-./run.sh
+.venv/bin/python -m generator.generate --dump dump/ --output output/
 .venv/bin/python -m generator.generate --output output/ -c
 ```
 
-Walks every generated page's `href`/`src` attributes and flags two things: a link to a file that doesn't exist, and a `#anchor` link (e.g. `topics/106.html#p53377`, a permalink to one specific post) whose target file exists but doesn't actually contain that anchor — the more useful of the two, since a plain missing-page link is easy to spot by eye, but a stale anchor pointing at a post that got excluded or never recovered isn't. External URLs aren't touched here; that's `--ignore-hosts`/`--url-mirrors`'s job. Results go to `output/broken_links.json`. Running it against this deployment's own archive found nothing beyond a handful of pre-existing data quirks (a real but nonsensical `href` value inside a quoted phpBB source-code example, and a few spam posts missing a proper `http://` prefix) — no actual archive-navigation bugs.
+Walks every generated page's `href`/`src` attributes and flags two things: a link to a file that doesn't exist, and a `#anchor` link (e.g. `topics/106.html#p53377`, a permalink to one specific post) whose target file exists but doesn't actually contain that anchor — the more useful of the two, since a plain missing-page link is easy to spot by eye, but a stale anchor pointing at a post that got excluded or never recovered isn't. External URLs aren't touched here; that's `--ignore-hosts`/`--url-mirrors`'s job. Results go to `output/broken_links.json`.
 
-### Recognizing this board across domain changes
+### Recognizing your board across domain changes
 
-A post linking back to phpbbmodders' own board only gets rewritten into a relative in-archive link when the link's own host is actually recognized as this board — a topic id alone isn't enough, since it's just a small integer that another phpBB install entirely (confirmed here: real links to `www.phpbb.com`, `rmcgirr83.org`, and dozens more) can just as easily reuse for a completely different topic. This board has really been reachable at three different domains over its lifetime, so `run.sh` passes [`config/board_hosts.json`](config/board_hosts.json) listing all three (`phpbbmodders.net`/`.com`/`.org`) alongside the dump's own `phpbb_config.server_name`.
+A post linking back to your own board only gets rewritten into a relative in-archive link when the link's own host is actually recognized as your board — a topic id alone isn't enough, since it's just a small integer that a completely unrelated phpBB install can just as easily reuse for a different topic. If your board has been reachable at more than one domain over its lifetime, `--board-hosts` lists the others alongside the dump's own `phpbb_config.server_name`:
 
-rmcgirr83.org's own community later merged into this board, but its domain is deliberately *not* in that list even though its links are common in the dump: its own historical topic ids aren't confirmed to have survived the merge unchanged, so treating it as internal would risk rewriting a link to whatever unrelated topic now happens to share that id here. A link to it stays a normal (still working) external link.
+```json
+["forum.example.org", "forum.example.com"]
+```
+
+A community that merged into your board from elsewhere should generally *not* be added to that list even though its links are common in the dump: its own historical topic ids aren't guaranteed to have survived the merge unchanged, so treating it as internal risks rewriting a link to whatever unrelated topic now happens to share that id on your board. Leaving it out keeps it a normal (still working) external link.
 
 ### Custom color scheme
 
-The archive's own layout ships with a neutral default palette. `--style-css` swaps it for any stylesheet you point at — this deployment uses [`config/phpbbmodders-style.css`](config/phpbbmodders-style.css), colors approximating the live board's own theme.
+The archive's own layout ships with a neutral default palette. `--style-css mystyle.css` swaps it for any stylesheet you point at — a common use is approximating your live board's own color scheme.
 
 Every generated page links `assets/style.css` rather than inlining it, so re-theming an already-built archive later is just dropping a new `assets/style.css` into its `output/` (or wherever it's deployed) — no regeneration required.
 
-`--theme dark` swaps the built-in neutral palette for a dark one without a custom `--style-css`; has no effect here since this deployment already uses one.
+`--theme dark` swaps the built-in neutral palette for a dark one without a custom `--style-css`; has no effect when a custom stylesheet is given, since that's its own fixed palette.
 
 ### Favicon and board logo
 
-Neither phpBBModders' favicon nor its logo lives anywhere in the SQL dump, so `run.sh` fetches both live: `--favicon-url https://phpbbmodders.net/favicon.ico` and `--logo-url https://www.phpbbmodders.com/modders-cog.gif`. A URL that can't be reached is skipped with a warning rather than failing the whole run — this matters in practice here, since `phpbbmodders.net`'s own copy of the logo is blocked by a Cloudflare JS challenge, while the `.com` copy isn't.
+A board's favicon and logo don't live anywhere in the SQL dump, so `--favicon-url`/`--logo-url` fetch them live from the board's real URLs (e.g. `--favicon-url https://forum.example.com/favicon.ico`) instead of requiring a local copy. A URL that can't be reached is skipped with a warning rather than failing the whole run — useful in practice, since some boards' logo/favicon end up behind a Cloudflare JS challenge that a plain HTTP client can't pass.
 
-The logo's on-page size uses this board's own configured `sitelogo_width`/`sitelogo_height` (84×80) rather than the source file's raw pixel dimensions (324×308) or a flat CSS cap — `--logo-natural-size` would show it unscaled at that raw size instead, which `run.sh` doesn't pass.
+The logo's on-page size uses the board's own configured `sitelogo_width`/`sitelogo_height` rather than the source file's raw pixel dimensions or a flat CSS cap — `--logo-natural-size` shows it unscaled at its raw size instead.
 
 ### Board-wide announcement
 
-`--announcement` shows a notice on the index, every forum page, and every topic page — written fresh for the archive (e.g. "this board is now read-only"), not pulled from the dump. This deployment's text lives in [`config/announcement.txt`](config/announcement.txt); an empty file (the default) renders nothing.
+`--announcement notice.txt` shows a notice on the index, every forum page, and every topic page — written fresh for the archive (e.g. "this board is now read-only"), not pulled from the dump. An empty file (or omitting the flag) renders nothing.
 
 ### Sitemap and robots.txt
 
-`--sitemap-url` writes `output/sitemap.xml` (index, every forum, every topic — each with a `<lastmod>` from its most recent post) and `output/robots.txt` pointing at it. This deployment uses `https://phpbbmodders.net/`, its real hosting URL.
+`--sitemap-url https://archive.example.com/` writes `output/sitemap.xml` (index, every forum, every topic — each with a `<lastmod>` from its most recent post) and `output/robots.txt` pointing at it — pass your own archive's real hosting URL.
 
 Every other link the archive generates is relative, so it works at any path — but sitemap entries have to be absolute URLs, which is why this flag needs the full deployment URL rather than inferring it. Excluded forums/topics are already left out of `output/` entirely, so they're never in the sitemap either.
 
-Every topic page also carries Open Graph and Twitter Card meta tags (title, description from the opening post, site name) unconditionally, so a shared link shows a real preview instead of nothing. `og:url` is the one tag that needs an absolute URL, so it only appears with `--sitemap-url` set (which `run.sh` already does) — everything else works regardless.
+Every topic page also carries Open Graph and Twitter Card meta tags (title, description from the opening post, site name) unconditionally, so a shared link shows a real preview instead of nothing. `og:url` is the one tag that needs an absolute URL, so it only appears when `--sitemap-url` is set — everything else works regardless.
 
 ### Full-text search
 
-`--search` adds `search.html` (linked from every page's header) and indexes every generated page with [Pagefind](https://pagefind.app/), a static client-side search engine — no server, no external service, same self-contained philosophy as the rest of the archive. This deployment's `run.sh` already passes it.
+`--search` adds `search.html` (linked from every page's header) and indexes every generated page with [Pagefind](https://pagefind.app/), a static client-side search engine — no server, no external service, same self-contained philosophy as the rest of the archive.
 
 Requires the `pagefind[bin]` package (already in `generator/requirements.txt`) — it ships a real compiled search binary via pip, no Node.js needed. The generator runs it as a subprocess after every other page is written, so search results always reflect the current run.
 
-Result titles come from a `data-pagefind-meta="title:..."` attribute the archive sets on every page's `<body>` — without it, Pagefind defaults to each page's first `<h1>`, which on this archive is always just the site name, making every search result look identical. `search.html` itself is excluded from the index (`data-pagefind-ignore`) since it has no content of its own, just the search widget. The widget's colors come from the same palette as everything else — see the `#search` block in [`config/phpbbmodders-style.css`](config/phpbbmodders-style.css).
+Result titles come from a `data-pagefind-meta="title:..."` attribute the archive sets on every page's `<body>` — without it, Pagefind defaults to each page's first `<h1>`, which on this archive is always just the site name, making every search result look identical. `search.html` itself is excluded from the index (`data-pagefind-ignore`) since it has no content of its own, just the search widget. The widget's colors come from the same palette as a custom `--style-css`, if one is given — see the `#search` block in the built-in `generator/static/style.css` for the CSS custom properties it uses.
 
-**Testing locally, `search.html` must be served over `http://`/`https://`, not opened as a `file://` path.** Pagefind's engine can't fetch its own index under `file://` — the query box will accept input and show "Searching for…" but never return results, with no error shown anywhere. Any static file server works for testing, e.g. `python3 -m http.server` from inside `output/`; the real deployment at `https://phpbbmodders.net/` is served over HTTPS anyway, so this only matters when checking the archive locally before publishing it.
+**Testing locally, `search.html` must be served over `http://`/`https://`, not opened as a `file://` path.** Pagefind's engine can't fetch its own index under `file://` — the query box will accept input and show "Searching for…" but never return results, with no error shown anywhere. Any static file server works for testing, e.g. `python3 -m http.server` from inside `output/`; a real deployment served over HTTPS doesn't run into this at all — it only matters when checking the archive locally before publishing it.
 
 ## What gets generated
 
@@ -382,3 +386,27 @@ All links are relative, so the archive works at any path — subdirectory, GitHu
 - Parses phpBB's UID-annotated BBCode into HTML (custom parser — generic BBCode libraries don't handle phpBB's format)
 - Copies assets from `dump/` and rewrites CSS paths for static hosting
 - Renders Jinja2 templates into static HTML
+
+## Documentation
+
+The [Wiki](https://github.com/phpbbmodders/phpbb-archive-advanced/wiki) covers every command-line flag and diagnostic mode in depth, function by function. [`docs/CHANGES.md`](docs/CHANGES.md) has the full history of what's been fixed and added, with real numbers from the dumps it's been tested against.
+
+## TODO
+
+Ideas not yet built, practical and speculative alike: [`docs/TODO.md`](docs/TODO.md).
+
+## Contributing
+
+Contributions are welcome! [Open an issue](https://github.com/phpbbmodders/phpbb-archive-advanced/issues) for bug reports, questions, or feature ideas. Pull requests are welcome for bug fixes or discussed features.
+
+## Acknowledgments
+
+This is an advanced fork of [matildepark/phpbb-archive](https://github.com/matildepark/phpbb-archive), the original generalized phpBB static archive generator. Everything in [`docs/CHANGES.md`](docs/CHANGES.md) — security/privacy hardening, pagination, full-text search, old-URL redirects, dark theme, custom profile fields, and the rest — was built on top of that original work.
+
+- Code review, bug fixes, and documentation assisted by [Claude](https://www.anthropic.com/claude).
+
+## License
+
+This project is licensed under the **MIT License**.
+
+See [LICENSE](LICENSE) for more information.
