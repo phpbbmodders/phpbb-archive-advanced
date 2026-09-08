@@ -30,13 +30,14 @@ hr { border: 0; border-top: 1px solid #333840; }
   margin-bottom: 0;
 }
 .header-titlebar { display: flex; align-items: flex-start; gap: 8px; }
+.header-titletext { padding-top: 8px; }
 .header-titlebar .site-logo { display: block; max-height: 50px; max-width: 100%; }
 .header-titlebar .site-logo--natural { max-height: none; max-width: none; }
 #page-header h1 { margin: 0; font-size: 1.5em; color: #fff; }
 #page-header h1 a { color: #fff; }
 #page-header h1 a:hover { text-decoration: none; color: #D1E8FF; }
 #page-header .site-tagline { color: #D1E8FF; font-size: 0.95em; font-style: italic; margin: 0; }
-#page-header .site-desc { color: #8FA8C4; font-size: 0.9em; margin: 8px 0 0; }
+#page-header .site-desc { display: flex; justify-content: space-between; align-items: baseline; color: #8FA8C4; font-size: 0.9em; margin: 8px 0 0; }
 #page-header .site-desc a.header-search { color: #fff; }
 #page-header .site-desc a.header-search:hover { text-decoration: none; color: #D1E8FF; }
 
@@ -172,13 +173,16 @@ table.topic-table td.lastpost { font-size: 0.85em; color: #9099A6; }
 }
 .notice strong { color: #A8B4C4; }
 
-/* Topic pagination (see TOPIC_PAGE_SIZE in generate.py) */
+/* Topic/forum pagination (see TOPIC_PAGE_SIZE/FORUM_PAGE_SIZE in generate.py) */
 .pagination {
   margin: 8px 0;
   padding: 6px 0;
   font-size: 0.9em;
-  text-align: center;
 }
+.pagination--align-left { text-align: left; }
+.pagination--align-center { text-align: center; }
+.pagination--align-right { text-align: right; }
+.pagination--top { margin-bottom: 10px; }
 .pagination a { margin: 0 3px; }
 .pagination strong { margin: 0 3px; color: #A8B4C4; }
 

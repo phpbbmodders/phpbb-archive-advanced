@@ -14,9 +14,15 @@ from generator.generate import (
     download_remote_avatars,
     find_image_urls,
     humanize_profile_field_label,
+    load_exclusions,
+    load_password_override,
     paginate_posts,
+    paginate_page_numbers,
+    paginate_topics,
     process_forum_descs,
+    read_table_prefix,
     render_redirects,
+    strip_trailing_attachments,
 )
 
 
@@ -173,7 +179,7 @@ class TestRedirectGeneration:
     def test_nginx_no_prefix_relative_base(self):
         result = _nginx_redirects("", "/")
         assert "location = /viewtopic.php {" in result
-        assert "return 301 /topics/$arg_t.html#p$arg_p;" in result
+        assert "return 301 /topics/$1.html#p$2;" in result
         assert "location = /viewforum.php {" in result
         assert "location = /memberlist.php {" in result
 
@@ -185,7 +191,20 @@ class TestRedirectGeneration:
 
     def test_nginx_absolute_base_url(self):
         result = _nginx_redirects("", "https://archive.example.com/")
-        assert "return 301 https://archive.example.com/topics/$arg_t.html#p$arg_p;" in result
+        assert "return 301 https://archive.example.com/topics/$1.html#p$2;" in result
+
+    def test_nginx_generic_topic_post_requires_both_numeric(self):
+        # A malformed request with p but no t must not fall through to
+        # the generic rule and build a broken destination like
+        # "/topics/.html#p123" — confirmed live against a real nginx
+        # instance: the previous "if ($arg_p) { .../topics/$arg_t.html#
+        # p$arg_p; }" checked $arg_p's presence but used $arg_t in the
+        # destination without checking it at all.
+        result = _nginx_redirects("", "/")
+        assert 'set $topic_post_key "$arg_t:$arg_p";' in result
+        assert 'if ($topic_post_key ~ "^([0-9]+):([0-9]+)$")' in result
+        assert 'if ($arg_t ~ "^[0-9]+$")' in result
+        assert "$arg_t.html#p$arg_p" not in result
 
     def test_render_redirects_apache_writes_htaccess(self, tmp_path):
         render_redirects(tmp_path, "apache", "board", "/")
@@ -253,7 +272,16 @@ class TestPaginatedRedirectBlocks:
         # topic 84/post 1331674 vs. topic 8413/post 31674) — must use an
         # explicit non-numeric separator.
         result = _nginx_redirects("", "/", self.MULTI_PAGE_TOPICS)
-        assert '$arg_t:$arg_p ~ "^8413:' in result
+        assert '$topic_page_key ~ "^8413:' in result
+
+    def test_nginx_sets_combined_key_before_testing_it(self):
+        # nginx's `if` only accepts a bare variable as its left-hand
+        # operand — an inline "$arg_t:$arg_p" there silently never
+        # matches (confirmed live against a real nginx instance). The
+        # combined value must be assigned with `set` first.
+        result = _nginx_redirects("", "/", self.MULTI_PAGE_TOPICS)
+        assert 'set $topic_page_key "$arg_t:$arg_p";' in result
+        assert result.index('set $topic_page_key') < result.index('if ($topic_page_key')
 
 
 class TestCleanDisabledFeatureOutput:
@@ -662,3 +690,208 @@ class TestComputePostPages:
         }
         result = compute_post_pages(topic_posts, page_size=25)
         assert result == {100: 1, 101: 1, 200: 1, 201: 1}
+
+
+class TestReadTablePrefix:
+    def test_single_quoted_value(self, tmp_path):
+        config = tmp_path / "config.php"
+        config.write_text("<?php\n$table_prefix = 'phpbb_';\n", encoding="utf-8")
+        assert read_table_prefix(config) == "phpbb_"
+
+    def test_double_quoted_value(self, tmp_path):
+        config = tmp_path / "config.php"
+        config.write_text('<?php\n$table_prefix = "phpbb_";\n', encoding="utf-8")
+        assert read_table_prefix(config) == "phpbb_"
+
+    def test_custom_prefix(self, tmp_path):
+        config = tmp_path / "config.php"
+        config.write_text("<?php\n$table_prefix = 'forum_';\n", encoding="utf-8")
+        assert read_table_prefix(config) == "forum_"
+
+    def test_missing_file_falls_back_to_default(self, tmp_path):
+        assert read_table_prefix(tmp_path / "does_not_exist.php") == "phpbb_"
+
+    def test_no_matching_line_falls_back_to_default(self, tmp_path):
+        config = tmp_path / "config.php"
+        config.write_text("<?php\n// nothing relevant here\n", encoding="utf-8")
+        assert read_table_prefix(config) == "phpbb_"
+
+
+class TestLoadExclusions:
+    def test_loads_categories_and_forums(self, tmp_path):
+        path = tmp_path / "exclude.json"
+        path.write_text('{"categories": [1, 2], "forums": [10]}', encoding="utf-8")
+        assert load_exclusions(path) == {1, 2, 10}
+
+    def test_string_ids_are_coerced_to_int(self, tmp_path):
+        path = tmp_path / "exclude.json"
+        path.write_text('{"categories": ["5"], "forums": []}', encoding="utf-8")
+        assert load_exclusions(path) == {5}
+
+    def test_invalid_id_raises_error_naming_file_and_key(self, tmp_path):
+        path = tmp_path / "exclude.json"
+        path.write_text('{"categories": [], "forums": [52, "o52"]}', encoding="utf-8")
+        try:
+            load_exclusions(path)
+            assert False, "expected ValueError"
+        except ValueError as e:
+            assert str(path) in str(e)
+            assert "forums" in str(e)
+            assert "o52" in str(e)
+
+
+class TestLoadPasswordOverride:
+    def test_loads_forums(self, tmp_path):
+        path = tmp_path / "password_override.json"
+        path.write_text('{"forums": [10, 20]}', encoding="utf-8")
+        assert load_password_override(path) == {10, 20}
+
+    def test_string_ids_are_coerced_to_int(self, tmp_path):
+        path = tmp_path / "password_override.json"
+        path.write_text('{"forums": ["5"]}', encoding="utf-8")
+        assert load_password_override(path) == {5}
+
+    def test_invalid_id_raises_error_naming_file_and_key(self, tmp_path):
+        path = tmp_path / "password_override.json"
+        path.write_text('{"forums": [52, "o52"]}', encoding="utf-8")
+        try:
+            load_password_override(path)
+            assert False, "expected ValueError"
+        except ValueError as e:
+            assert str(path) in str(e)
+            assert "forums" in str(e)
+            assert "o52" in str(e)
+
+
+class TestStripTrailingAttachments:
+    def test_removes_trailing_image_attachment_block(self):
+        html = (
+            "<p>hello</p>"
+            '\n<div class="post-attachments">'
+            '<div class="inline-attachment">'
+            '<a href="x"><img src="x" alt="a.png" loading="lazy" /></a>'
+            "<br/><em>Attachment: a.png</em></div></div>"
+        )
+        assert strip_trailing_attachments(html) == "<p>hello</p>"
+
+    def test_removes_trailing_non_image_attachment_block(self):
+        html = (
+            "<p>see attached</p>"
+            '\n<div class="post-attachments">'
+            '<div class="inline-attachment">badge<a href="x">Attachment: a.zip</a></div></div>'
+        )
+        assert strip_trailing_attachments(html) == "<p>see attached</p>"
+
+    def test_leaves_html_without_attachments_unchanged(self):
+        html = "<p>just text, no attachments</p>"
+        assert strip_trailing_attachments(html) == html
+
+
+class TestPaginateTopics:
+    def test_splits_into_page_size_chunks(self):
+        topics = [{"topic_id": i} for i in range(1, 8)]
+        pages = paginate_topics(topics, page_size=3)
+        assert [len(p) for p in pages] == [3, 3, 1]
+
+    def test_single_page_when_under_threshold(self):
+        topics = [{"topic_id": i} for i in range(1, 4)]
+        assert paginate_topics(topics, page_size=50) == [topics]
+
+    def test_empty_forum_still_gets_one_page(self):
+        assert paginate_topics([], page_size=50) == [[]]
+
+    def test_exact_multiple_of_page_size(self):
+        topics = [{"topic_id": i} for i in range(1, 101)]
+        pages = paginate_topics(topics, page_size=50)
+        assert [len(p) for p in pages] == [50, 50]
+
+
+class TestPaginatePageNumbers:
+    # Ported from phpBB 3.3.x's own phpbb/pagination.php
+    # generate_template_pagination() — these expected sequences are
+    # traced by hand against that real algorithm, not invented, so a
+    # heavily-paginated forum's control (forum 125 on phpbbmodders.net:
+    # 48 real pages) matches real phpBB's own "1 2 3 4 5 … 48" /
+    # "1 … 19 20 21 22 23 … 48" layout instead of listing every page.
+
+    def test_five_or_fewer_pages_shows_all_no_ellipsis(self):
+        assert paginate_page_numbers(1, 5) == [1, 2, 3, 4, 5]
+        assert paginate_page_numbers(3, 5) == [1, 2, 3, 4, 5]
+
+    def test_single_page(self):
+        assert paginate_page_numbers(1, 1) == [1]
+
+    def test_page_one_of_48(self):
+        assert paginate_page_numbers(1, 48) == [1, 2, 3, 4, 5, None, 48]
+
+    def test_page_21_of_48(self):
+        assert paginate_page_numbers(21, 48) == [1, None, 19, 20, 21, 22, 23, None, 48]
+
+    def test_last_page_of_48(self):
+        assert paginate_page_numbers(48, 48) == [1, None, 44, 45, 46, 47, 48]
+
+    def test_six_pages_current_page_one_no_ellipsis_needed(self):
+        # The current-page window already spans all 6 pages, so no
+        # ellipsis is inserted even though total > 5.
+        assert paginate_page_numbers(1, 6) == [1, 2, 3, 4, 5, 6]
+
+    def test_page_near_start_of_large_total(self):
+        assert paginate_page_numbers(2, 48) == [1, 2, 3, 4, 5, None, 48]
+
+    def test_page_near_end_of_large_total(self):
+        assert paginate_page_numbers(47, 48) == [1, None, 44, 45, 46, 47, 48]
+
+
+class TestForumPaginatedRedirectBlocks:
+    # A deep link with a start= offset (?f=X&start=Y) into a paginated
+    # forum's topic listing (see FORUM_PAGE_SIZE in generate.py) must land
+    # on that page, not always page 1. Unlike a topic's real, irregular
+    # post ids, a forum page's start offset is an exact, deterministic
+    # multiple of FORUM_PAGE_SIZE (50): page 2 starts at 50, page 3 at 100.
+
+    MULTI_PAGE_FORUMS = {125: 3}  # forum 125, 3 total pages
+
+    def test_apache_no_pagination_data_unchanged(self):
+        assert _apache_redirects("", "/") == _apache_redirects("", "/", None, None)
+
+    def test_apache_emits_page_specific_rules_for_each_page(self):
+        result = _apache_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        assert "forums/125-p2.html?" in result
+        assert "forums/125-p3.html?" in result
+        assert "start=50" in result
+        assert "start=100" in result
+
+    def test_apache_page_rule_comes_before_generic_rule(self):
+        result = _apache_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        specific_pos = result.index("forums/125-p2.html")
+        generic_pos = result.index("forums/%1.html?")
+        assert specific_pos < generic_pos
+
+    def test_apache_handles_both_f_start_orders(self):
+        result = _apache_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        assert result.count("forums/125-p2.html?") == 2
+
+    def test_nginx_no_pagination_data_unchanged(self):
+        assert _nginx_redirects("", "/") == _nginx_redirects("", "/", None, None)
+
+    def test_nginx_emits_page_specific_rules_for_each_page(self):
+        result = _nginx_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        assert '$forum_page_key = "125:50"' in result
+        assert '$forum_page_key = "125:100"' in result
+        assert "forums/125-p2.html" in result
+        assert "forums/125-p3.html" in result
+
+    def test_nginx_sets_combined_key_before_testing_it(self):
+        # nginx's `if` only accepts a bare variable as its left-hand
+        # operand — an inline "$arg_f:$arg_start" there silently never
+        # matches (confirmed live against a real nginx instance). The
+        # combined value must be assigned with `set` first.
+        result = _nginx_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        assert 'set $forum_page_key "$arg_f:$arg_start";' in result
+        assert result.index('set $forum_page_key') < result.index('if ($forum_page_key')
+
+    def test_nginx_page_rule_comes_before_generic_rule(self):
+        result = _nginx_redirects("", "/", None, self.MULTI_PAGE_FORUMS)
+        specific_pos = result.index("forums/125-p2.html")
+        generic_pos = result.index("forums/$arg_f.html")
+        assert specific_pos < generic_pos
