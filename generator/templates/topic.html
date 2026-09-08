@@ -20,7 +20,7 @@
 {% macro pagination_controls() %}
 {% if pagination %}
 <div class="pagination">
-  {% if pagination.current > 1 %}<a href="{{ root }}topics/{{ pagination.topic_id }}{% if pagination.current > 2 %}-p{{ pagination.current - 1 }}{% endif %}.html">&laquo; Previous</a>{% endif %}
+  Pages: {% if pagination.current > 1 %}<a href="{{ root }}topics/{{ pagination.topic_id }}{% if pagination.current > 2 %}-p{{ pagination.current - 1 }}{% endif %}.html">&laquo; Previous</a>{% endif %}
   {% for p in range(1, pagination.total + 1) %}{% if p == pagination.current %}<strong>{{ p }}</strong>{% else %}<a href="{{ root }}topics/{{ pagination.topic_id }}{% if p > 1 %}-p{{ p }}{% endif %}.html">{{ p }}</a>{% endif %}{% if not loop.last %} {% endif %}{% endfor %}
   {% if pagination.current < pagination.total %}<a href="{{ root }}topics/{{ pagination.topic_id }}-p{{ pagination.current + 1 }}.html">Next &raquo;</a>{% endif %}
 </div>
