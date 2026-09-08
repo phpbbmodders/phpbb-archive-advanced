@@ -13,10 +13,14 @@ One real bug it pointed at was independently verified and fixed already
 (see `docs/CHANGES.md`, "Old-URL redirect fix: nginx `p`-without-`t`
 malformed destination") — everything else in it is still just a proposal.
 
-## Why deferred
+## Why deferred (historical — see "Verification status" below)
+
+This was the original reason for deferral, kept as-written for context.
+Every question it raises has since been verified — don't read this
+section as still-open.
 
 Caddy's placeholder for a single named query parameter (e.g. the `t` in
-`?t=42`) and Traefik's regex-redirect middleware config both need real
+`?t=42`) and Traefik's regex-redirect middleware config both needed real
 verification (docs research, and ideally testing against a real
 Caddy/Traefik instance) before generating something a user might deploy
 without noticing it's wrong — the same bar `apache`/`nginx` were held to,
