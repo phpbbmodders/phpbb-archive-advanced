@@ -362,6 +362,43 @@ class TestInternalLinkRewriting:
         assert 'href="../topics/999.html"' not in result
 
 
+class TestPageAwareInternalLinkRewriting:
+    # A link to a specific post (#pNNNN) in a paginated topic must point at
+    # that post's own page, not always page 1 — see TOPIC_PAGE_SIZE/
+    # compute_post_pages() in generate.py.
+
+    @pytest.fixture
+    def parser(self):
+        return PhpbbBBCodeParser(
+            smilies=[], attachments={}, assets_prefix="../assets",
+            internal_topic_ids={42}, board_hosts={"ourboard.example"},
+            post_id_to_page={555: 3},
+        )
+
+    def test_link_to_post_beyond_page_one_gets_page_suffix(self, parser):
+        result = parser.convert(
+            "[url=https://ourboard.example/viewtopic.php?t=42#p555]click[/url]", uid="")
+        assert 'href="../topics/42-p3.html#p555"' in result
+
+    def test_link_to_post_on_page_one_gets_no_suffix(self, parser):
+        result = parser.convert(
+            "[url=https://ourboard.example/viewtopic.php?t=42#p1]click[/url]", uid="")
+        assert 'href="../topics/42.html#p1"' in result
+
+    def test_link_to_unmapped_post_defaults_to_page_one(self, parser):
+        # A post_id absent from post_id_to_page (pagination info not built,
+        # or the post genuinely doesn't exist) defaults to page 1 rather
+        # than erroring.
+        result = parser.convert(
+            "[url=https://ourboard.example/viewtopic.php?t=42#p999999]click[/url]", uid="")
+        assert 'href="../topics/42.html#p999999"' in result
+
+    def test_link_with_no_post_fragment_unaffected(self, parser):
+        result = parser.convert(
+            "[url=https://ourboard.example/viewtopic.php?t=42]click[/url]", uid="")
+        assert 'href="../topics/42.html"' in result
+
+
 class TestXmlUrlEntityDecoding:
     # <URL url="..."> is a raw XML attribute value, where a real "&" is
     # stored entity-escaped as "&amp;" per XML rules. The final href is

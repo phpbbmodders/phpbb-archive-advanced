@@ -7,12 +7,14 @@ from generator.generate import (
     _nginx_redirects,
     build_edit_notice,
     clean_disabled_feature_output,
+    compute_post_pages,
     copy_assets,
     copy_avatars,
     download_external_images,
     download_remote_avatars,
     find_image_urls,
     humanize_profile_field_label,
+    paginate_posts,
     process_forum_descs,
     render_redirects,
 )
@@ -194,6 +196,64 @@ class TestRedirectGeneration:
         render_redirects(tmp_path, "nginx", "board", "/")
         content = (tmp_path / "nginx-redirects.conf").read_text(encoding="utf-8")
         assert "location = /board/viewtopic.php {" in content
+
+
+class TestPaginatedRedirectBlocks:
+    # A deep link to a specific post (?t=X&p=Y) in a paginated topic (see
+    # TOPIC_PAGE_SIZE in generate.py) must land on that post's own page,
+    # not always page 1 — real topic 8413 on phpbbmodders.net's own dump
+    # has exactly this shape: page 1 holds post_ids 31649-31673, page 2
+    # holds 31674-31698, etc., each page an exact contiguous, non-
+    # overlapping range (confirmed real).
+
+    MULTI_PAGE_TOPICS = {8413: [
+        list(range(31649, 31674)),  # page 1 (no rule needed, it's the default)
+        list(range(31674, 31699)),  # page 2
+    ]}
+
+    def test_apache_no_pagination_data_unchanged(self):
+        # multi_page_topics=None (the default) must produce byte-identical
+        # output to before this feature existed.
+        assert _apache_redirects("", "/") == _apache_redirects("", "/", None)
+
+    def test_apache_emits_page_specific_rule(self):
+        result = _apache_redirects("", "/", self.MULTI_PAGE_TOPICS)
+        assert "topics/8413-p2.html#p%1?" in result
+        # Real post ids from page 2 appear in the alternation; page 1's
+        # own ids must not (they don't need a special rule).
+        assert "31674" in result
+        assert "31649" not in result
+
+    def test_apache_page_rule_comes_before_generic_rule(self):
+        # The specific rule's [L] flag only helps if Apache reaches it
+        # first — it must be placed before the generic t=/p= rule.
+        result = _apache_redirects("", "/", self.MULTI_PAGE_TOPICS)
+        specific_pos = result.index("topics/8413-p2.html")
+        generic_pos = result.index("topics/%1.html#p%2?")
+        assert specific_pos < generic_pos
+
+    def test_apache_handles_both_t_p_orders(self):
+        # Same t-before-p / p-before-t duplication the generic rule needs,
+        # for the same %N-backreference reason.
+        result = _apache_redirects("", "/", self.MULTI_PAGE_TOPICS)
+        assert result.count("topics/8413-p2.html#p%1?") == 2
+
+    def test_nginx_no_pagination_data_unchanged(self):
+        assert _nginx_redirects("", "/") == _nginx_redirects("", "/", None)
+
+    def test_nginx_emits_page_specific_rule(self):
+        result = _nginx_redirects("", "/", self.MULTI_PAGE_TOPICS)
+        assert "topics/8413-p2.html#p$arg_p" in result
+        assert "31674" in result
+        assert "31649" not in result
+
+    def test_nginx_uses_separator_to_avoid_digit_concatenation_ambiguity(self):
+        # $arg_t and $arg_p concatenated with no separator could conflate
+        # two different (topic, post) pairs purely by digit boundary (e.g.
+        # topic 84/post 1331674 vs. topic 8413/post 31674) — must use an
+        # explicit non-numeric separator.
+        result = _nginx_redirects("", "/", self.MULTI_PAGE_TOPICS)
+        assert '$arg_t:$arg_p ~ "^8413:' in result
 
 
 class TestCleanDisabledFeatureOutput:
@@ -557,3 +617,48 @@ class TestHumanizeProfileFieldLabel:
 
     def test_leaves_mixed_case_label_unchanged(self):
         assert humanize_profile_field_label("Pick Your choice") == "Pick Your choice"
+
+
+class TestPaginatePosts:
+    def test_splits_into_page_size_chunks(self):
+        posts = [{"post_id": i} for i in range(1, 8)]
+        pages = paginate_posts(posts, page_size=3)
+        assert [len(p) for p in pages] == [3, 3, 1]
+
+    def test_single_page_when_under_threshold(self):
+        posts = [{"post_id": i} for i in range(1, 4)]
+        assert paginate_posts(posts, page_size=25) == [posts]
+
+    def test_empty_topic_still_gets_one_page(self):
+        # An empty page list, not zero pages — a topic with no recoverable
+        # posts still needs exactly one rendered page.
+        assert paginate_posts([], page_size=25) == [[]]
+
+    def test_exact_multiple_of_page_size(self):
+        posts = [{"post_id": i} for i in range(1, 51)]
+        pages = paginate_posts(posts, page_size=25)
+        assert [len(p) for p in pages] == [25, 25]
+
+
+class TestComputePostPages:
+    def test_single_topic_under_threshold_all_page_one(self):
+        topic_posts = {1: [{"post_id": 10}, {"post_id": 11}, {"post_id": 12}]}
+        result = compute_post_pages(topic_posts, page_size=25)
+        assert result == {10: 1, 11: 1, 12: 1}
+
+    def test_single_topic_spans_multiple_pages(self):
+        posts = [{"post_id": i} for i in range(1, 8)]
+        topic_posts = {1: posts}
+        result = compute_post_pages(topic_posts, page_size=3)
+        assert result == {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2, 7: 3}
+
+    def test_page_numbers_are_per_topic_not_global(self):
+        # Two topics, each individually under the threshold — the second
+        # topic's posts must still be page 1 of *their own* topic, not
+        # some running offset across topics.
+        topic_posts = {
+            1: [{"post_id": 100}, {"post_id": 101}],
+            2: [{"post_id": 200}, {"post_id": 201}],
+        }
+        result = compute_post_pages(topic_posts, page_size=25)
+        assert result == {100: 1, 101: 1, 200: 1, 201: 1}

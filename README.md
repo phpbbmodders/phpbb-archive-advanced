@@ -362,7 +362,7 @@ Result titles come from a `data-pagefind-meta="title:..."` attribute the archive
 output/
 ├── index.html          # Board index
 ├── forums/<id>.html    # One page per forum (topic list)
-├── topics/<id>.html    # One page per thread (all posts)
+├── topics/<id>.html    # One page per thread (25 posts/page; page 2+ is <id>-pN.html)
 ├── users/<id>.html     # User profile pages
 ├── assets/              # CSS, images, smilies, avatars, attachments, logo
 ├── favicon.<ext>         # Only with --favicon/--favicon-url

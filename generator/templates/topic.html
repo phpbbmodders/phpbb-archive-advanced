@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% block title %}{{ topic.topic_title | e }} - {{ site_name }}{% endblock %}
+{% block title %}{{ page_title | e }} - {{ site_name }}{% endblock %}
 
 {% block extra_head %}
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="{{ site_name }}">
-<meta property="og:title" content="{{ topic.topic_title }} - {{ site_name }}">
+<meta property="og:title" content="{{ page_title }} - {{ site_name }}">
 {% if posts %}<meta property="og:description" content="{{ posts[0].rendered_html | striptags | truncate(200) }}">{% endif %}
-{% if site_url %}<meta property="og:url" content="{{ site_url }}topics/{{ topic.topic_id }}.html">{% endif %}
+{% if site_url %}<meta property="og:url" content="{{ site_url }}topics/{{ topic.topic_id }}{% if pagination and pagination.current > 1 %}-p{{ pagination.current }}{% endif %}.html">{% endif %}
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="{{ topic.topic_title }} - {{ site_name }}">
+<meta name="twitter:title" content="{{ page_title }} - {{ site_name }}">
 {% if posts %}<meta name="twitter:description" content="{{ posts[0].rendered_html | striptags | truncate(200) }}">{% endif %}
 {% endblock %}
 
@@ -17,9 +17,20 @@
  &rsaquo; {{ topic.topic_title | e }}
 {% endblock %}
 
+{% macro pagination_controls() %}
+{% if pagination %}
+<div class="pagination">
+  {% if pagination.current > 1 %}<a href="{{ root }}topics/{{ pagination.topic_id }}{% if pagination.current > 2 %}-p{{ pagination.current - 1 }}{% endif %}.html">&laquo; Previous</a>{% endif %}
+  {% for p in range(1, pagination.total + 1) %}{% if p == pagination.current %}<strong>{{ p }}</strong>{% else %}<a href="{{ root }}topics/{{ pagination.topic_id }}{% if p > 1 %}-p{{ p }}{% endif %}.html">{{ p }}</a>{% endif %}{% if not loop.last %} {% endif %}{% endfor %}
+  {% if pagination.current < pagination.total %}<a href="{{ root }}topics/{{ pagination.topic_id }}-p{{ pagination.current + 1 }}.html">Next &raquo;</a>{% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
 {% block content %}
 {% if announcement_html %}<div class="announcement">{{ announcement_html | safe }}</div>{% endif %}
 <h2>{{ topic.topic_title | e }}</h2>
+{{ pagination_controls() }}
 
 {% if poll %}
 <div class="poll">
@@ -41,7 +52,7 @@
 <div style="padding:12px; color:#999; font-style:italic;">This topic's post content is missing from the source database and could not be recovered.</div>
 {% endif %}
 
-{% if posts and posts[0].post_id != topic.topic_first_post_id %}
+{% if posts and (not pagination or pagination.current == 1) and posts[0].post_id != topic.topic_first_post_id %}
 <div style="padding:8px 12px; color:#999; font-style:italic; border-bottom:1px solid #D1D7E3; margin-bottom:8px;">The opening post of this topic is missing from the source database and could not be recovered. Showing the remaining posts below.</div>
 {% endif %}
 
@@ -89,6 +100,7 @@
   </div>
 </div>
 {% endfor %}
+{{ pagination_controls() }}
 {% endblock %}
 
-{% block footer_note %}{{ posts | length }} post(s){% endblock %}
+{% block footer_note %}{{ topic.topic_posts_approved }} post(s){% if pagination %} &middot; Page {{ pagination.current }} of {{ pagination.total }}{% endif %}{% endblock %}

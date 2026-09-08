@@ -80,7 +80,8 @@ class PhpbbBBCodeParser:
                  external_images: dict[str, str] | None = None,
                  internal_topic_ids: set[int] | None = None,
                  bad_smilies: set[str] | None = None,
-                 board_hosts: set[str] | None = None):
+                 board_hosts: set[str] | None = None,
+                 post_id_to_page: dict[int, int] | None = None):
         # Map smiley code → (image filename, display width, display height).
         # phpBB stores a smiley pack's *intended* display size separately
         # from its source image files, which are often much larger (a
@@ -131,6 +132,12 @@ class PhpbbBBCodeParser:
         # set at all. See _rewrite_internal_link.
         self.board_hosts = {h.lower().removeprefix("www.") for h in (board_hosts or set())}
         self.topics_prefix = re.sub(r'assets$', 'topics', assets_prefix)
+        # post_id -> the page number (within its own topic) that post
+        # actually lands on, for a same-archive link that targets a
+        # specific post (a "#pNNNN" fragment) — see _rewrite_internal_link.
+        # A post_id missing from this map (page 1, or pagination disabled)
+        # defaults to page 1, which needs no "-pN" suffix.
+        self.post_id_to_page = post_id_to_page or {}
 
     def _is_same_board_host(self, url: str) -> bool:
         """True if url has no host at all (relative, or a bare
@@ -148,19 +155,28 @@ class PhpbbBBCodeParser:
         """If url points at this board's own viewtopic.php (see
         _is_same_board_host) for a topic that's actually in this archive,
         rewrite it to a relative topics/N.html link (preserving a #pNNNN
-        post anchor if present) so cross-topic references stay working
-        inside the static archive. Otherwise returns url with any phpBB
-        session id stripped (see _strip_sid) — including a viewtopic.php
-        link on a different board entirely, or to a topic that's been
-        excluded from this archive, which stays a normal external link
-        rather than becoming a broken or (worse) a wrong one."""
+        post anchor if present, and pointing at that post's own paginated
+        page — e.g. topics/N-p3.html#p999 — if it isn't on page 1) so
+        cross-topic references stay working inside the static archive.
+        Otherwise returns url with any phpBB session id stripped (see
+        _strip_sid) — including a viewtopic.php link on a different board
+        entirely, or to a topic that's been excluded from this archive,
+        which stays a normal external link rather than becoming a broken
+        or (worse) a wrong one."""
         topic_match = re.search(r'viewtopic\.php\?[^"#]*\bt=(\d+)', url)
         if topic_match and self._is_same_board_host(url):
             topic_id = int(topic_match.group(1))
             if topic_id in self.internal_topic_ids:
-                fragment_match = re.search(r'(#p\d+)', url)
-                fragment = fragment_match.group(1) if fragment_match else ''
-                return f'{self.topics_prefix}/{topic_id}.html{fragment}'
+                fragment_match = re.search(r'#p(\d+)', url)
+                if fragment_match:
+                    target_post_id = int(fragment_match.group(1))
+                    page = self.post_id_to_page.get(target_post_id, 1)
+                    page_suffix = f'-p{page}' if page > 1 else ''
+                    fragment = f'#p{target_post_id}'
+                else:
+                    page_suffix = ''
+                    fragment = ''
+                return f'{self.topics_prefix}/{topic_id}{page_suffix}.html{fragment}'
         result = self._strip_sid(url)
         # phpBB never validated a stored [url=...]'s scheme at write time,
         # so a real dump can still contain a spam/exploit post with

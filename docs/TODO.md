@@ -16,9 +16,14 @@ Ideas not yet built, practical and speculative alike.
   parameterization `apache`/`nginx` already have (see `_apache_redirects`/
   `_nginx_redirects`) — the old board's install path and a redirect
   rule running on a different host than the archive are both format-
-  agnostic requirements, not something specific to apache/nginx.
-
-Reported from an earlier session's own notes (numbers below as reported, not yet independently re-verified against the current dump):
-
-- **Topic pagination**: flagged as deferred in an earlier session; the original scope notes (split long topics into multiple pages vs. one page per topic, page-size threshold, etc.) weren't captured anywhere, so this needs to be re-scoped from scratch with the user before implementing, not guessed at.
-
+  agnostic requirements, not something specific to apache/nginx. It also
+  now needs the same per-page redirect blocks apache/nginx gained for
+  topic pagination (`_paginated_redirect_blocks_apache`/`_nginx`,
+  `multi_page_topics` from `render_topics()`) — without them, a deep link
+  to a specific post beyond page 1 of a paginated topic would land on
+  page 1 instead of its own actual page, the same real bug the apache/
+  nginx fix addressed. Caddy/Traefik would need their own equivalent way
+  to match an exact alternation of a page's real post ids (a numeric
+  min/max range isn't safe with Apache's own lexicographic RewriteCond
+  comparisons — verify whether Caddy/Traefik's own condition matching has
+  the same limitation before assuming a range works there).
