@@ -51,6 +51,7 @@ usage: generate.py [-h] [--dump DUMP] [--output OUTPUT]
                    [--attachment-recovery DIR] [--style-css FILE]
                    [--announcement FILE] [--sitemap-url URL] [--search]
                    [--profile-position {left,right}]
+                   [--pagination-align {left,center,right}]
                    [--favicon FILE | --favicon-url URL]
                    [--logo FILE | --logo-url URL] [--logo-natural-size]
                    [--theme {light,dark}] [--board-hosts FILE]
@@ -169,6 +170,10 @@ options:
                         Which side of a post the poster's profile sidebar
                         (avatar, rank, post count) sits on in viewtopic.
                         Defaults to left, matching phpBB's own layout.
+  --pagination-align {left,center,right}
+                        Horizontal alignment of the topic/forum pagination
+                        controls (Previous/page-number-list/Next). Defaults
+                        to left.
   --favicon FILE        Image file (ico/png/svg/...) used as the archive's
                         favicon. Kept in its original format, copied to
                         output/favicon.<ext>. Omit for no favicon.

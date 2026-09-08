@@ -21,6 +21,7 @@ Everything below was added on top of matildepark's original 4 commits (`b079b39`
 | `--search` | Adds `search.html`, indexed with Pagefind — see below |
 | `-c`/`--check-links` | Diagnostic mode: scans an already-generated `output/` for internal links that don't resolve, writes `output/broken_links.json` — see below |
 | `--profile-position {left,right}` | Which side of a post the poster's profile sidebar sits on in viewtopic. Defaults to left, matching phpBB's own layout |
+| `--pagination-align {left,center,right}` | Horizontal alignment of the topic/forum pagination controls. Defaults to left — see below |
 | `--favicon FILE` / `--favicon-url URL` | Favicon from a local file or fetched live — see below |
 | `--logo FILE` / `--logo-url URL` | Board logo shown in the header, from a local file or fetched live — see below |
 | `--logo-natural-size` | Shows the logo at its own original size instead of scaling it to fit the header |
@@ -181,6 +182,12 @@ A forum's own topic-listing page had the same problem topics used to have, worse
 ## Old-URL redirect fix: nginx `p`-without-`t` malformed destination
 
 A second real bug, found while independently verifying an unsolicited external review of the redirect generator (`chatgpt-httacsss-rviw.md`, section 8) rather than trusting its claim outright: the generic nginx `viewtopic.php` rule checked `$arg_p`'s presence, then built its destination from `$arg_t` *without checking `$arg_t` at all*. A request carrying `p` but no `t` (`?p=123`) built `https://.../topics/.html#p123` — a real, empty-path-segment destination, not merely a wrong one. Confirmed live before fixing (the broken rule really does produce that destination against a real nginx instance) and confirmed the equivalent Apache rule is unaffected (its `RewriteCond` regex already requires both ids to be numeric before either capture is usable). Fixed with the same `set`-a-combined-variable technique used for pagination: `$topic_post_key` ("$arg_t:$arg_p") is tested with `^([0-9]+):([0-9]+)$` for the combined case, and `$arg_t` alone with `^[0-9]+$` for the topic-only fallback — matching Apache's existing numeric-only behavior instead of the looser presence check. Verified live: valid `t`+`p` and `t`-only both still redirect correctly, `p` without `t` and a non-numeric `t` both now correctly produce no redirect (404, the same as before this rule existed) instead of a broken destination.
+
+## Pagination control polish: truncated page list, alignment, spacing
+
+A forum with many pages (forum 125: 48) previously listed every single page number in the "Pages:" control, wrapping across several lines on real content widths. `paginate_page_numbers()` now ports phpBB 3.3.x's own `phpbb/pagination.php` `generate_template_pagination()` algorithm (confirmed against phpBB's real source, traced by hand against several real cases before writing tests) — once a control has more than 5 pages, it shows the first page, up to 5 pages centered on the current one, the last page, and an ellipsis (`…`) for the gaps: `1 2 3 4 5 … 48` on page 1, `1 … 19 20 21 22 23 … 48` on page 21 of forum 125's real 48 — instead of listing all 48.
+
+`--pagination-align {left,center,right}` (default `left`) controls the control's horizontal alignment, replacing the previously hardcoded centering. The top-of-page instance (before the post/topic list) also gets slightly more bottom margin than the bottom instance, so it doesn't crowd the content directly below it — the two instances are now distinguished with `pagination--top`/`pagination--bottom` modifier classes for exactly this kind of independent styling.
 
 ## Open Graph / Twitter Card meta tags
 

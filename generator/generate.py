@@ -1192,6 +1192,33 @@ def paginate_topics(topics: list[dict], page_size: int) -> list[list[dict]]:
     return [topics[i:i + page_size] for i in range(0, len(topics), page_size)]
 
 
+def paginate_page_numbers(current: int, total: int) -> list[int | None]:
+    """The page-number sequence a pagination control should display,
+    truncating with an ellipsis (None) once there are more than 5 pages
+    — ported from phpBB 3.3.x's own phpbb/pagination.php
+    generate_template_pagination() (confirmed against phpBB's real
+    source), so a heavily-paginated forum's control (up to 48 real pages
+    on phpbbmodders.net) matches real phpBB's own layout — e.g. "1 2 3 4
+    5 … 48" on page 1, "1 … 19 20 21 22 23 … 48" on page 21 — instead of
+    listing every page number and wrapping across several lines."""
+    if total <= 5:
+        return list(range(1, total + 1))
+    start_page = min(max(1, current - 2), total - 4)
+    end_page = max(min(total, current + 2), 5)
+    pages: list[int | None] = []
+    at_page = 1
+    while at_page <= total:
+        is_ellipsis = (at_page == 2 and start_page > 2) or (at_page == total - 1 and end_page < total - 1)
+        pages.append(None if is_ellipsis else at_page)
+        if at_page == 2 and at_page < start_page - 1:
+            at_page = start_page
+        elif at_page == end_page and end_page < total - 1:
+            at_page = total - 1
+        else:
+            at_page += 1
+    return pages
+
+
 # ---------------------------------------------------------------------------
 # Forum tree builder
 # ---------------------------------------------------------------------------
@@ -1340,7 +1367,12 @@ def render_forums(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
         for page_num, page_topics in enumerate(pages, start=1):
             pagination = None
             if len(pages) > 1:
-                pagination = {"forum_id": forum["forum_id"], "current": page_num, "total": len(pages)}
+                pagination = {
+                    "forum_id": forum["forum_id"],
+                    "current": page_num,
+                    "total": len(pages),
+                    "pages": paginate_page_numbers(page_num, len(pages)),
+                }
             html = tmpl.render(
                 page_title=forum["forum_name"],
                 forum=forum,
@@ -1495,7 +1527,12 @@ def render_topics(env: jinja2.Environment, out: Path, db: PhpbbDatabase,
             multi_page_topics[topic["topic_id"]] = [[p["post_id"] for p in page] for page in pages]
         for page_num, page_posts in enumerate(pages, start=1):
             filename = f"{topic['topic_id']}.html" if page_num == 1 else f"{topic['topic_id']}-p{page_num}.html"
-            pagination = {"current": page_num, "total": total_pages, "topic_id": topic["topic_id"]} if total_pages > 1 else None
+            pagination = {
+                "current": page_num,
+                "total": total_pages,
+                "topic_id": topic["topic_id"],
+                "pages": paginate_page_numbers(page_num, total_pages),
+            } if total_pages > 1 else None
             html = tmpl.render(
                 page_title=topic["topic_title"] if page_num == 1 else f"{topic['topic_title']} - Page {page_num}",
                 topic=topic,
@@ -2075,6 +2112,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
              attachment_recovery_dir: str | None = None, style_css_path: str | None = None,
              announcement_path: str | None = None, sitemap_url: str | None = None,
              search: bool = False, profile_position: str = "left",
+             pagination_align: str = "left",
              favicon_path: str | None = None, favicon_url: str | None = None,
              logo_path: str | None = None, logo_url: str | None = None,
              logo_natural_size: bool = False, theme: str = "light",
@@ -2182,6 +2220,7 @@ def generate(dump_dir: str, output_dir: str, avatar_overrides_path: str | None =
     env = build_jinja_env(template_dir)
     env.globals["search_enabled"] = search
     env.globals["profile_position"] = profile_position
+    env.globals["pagination_align"] = pagination_align
     env.globals["site_desc"] = db.get_config("site_desc") or None
     env.globals["board_index_text"] = db.get_config("board_index_text") or "Board index"
     # phpBB's own admin setting for whether an edited post's "Last edited
@@ -2589,6 +2628,9 @@ def main() -> None:
                          help="Which side of a post the poster's profile sidebar (avatar, rank, "
                               "post count) sits on in viewtopic. Defaults to left, matching "
                               "phpBB's own layout.")
+    parser.add_argument("--pagination-align", choices=["left", "center", "right"], default="left",
+                         help="Horizontal alignment of the topic/forum pagination controls "
+                              "(Previous/page-number-list/Next). Defaults to left.")
     favicon_group = parser.add_mutually_exclusive_group()
     favicon_group.add_argument("--favicon", metavar="FILE",
                          help="Image file (ico/png/svg/...) used as the archive's favicon. Kept "
@@ -2664,6 +2706,7 @@ def main() -> None:
                  args.url_mirrors,
                  args.incremental, args.ignore_hosts, args.attachment_recovery, args.style_css,
                  args.announcement, args.sitemap_url, args.search, args.profile_position,
+                 args.pagination_align,
                  args.favicon, args.favicon_url, args.logo, args.logo_url,
                  args.logo_natural_size, args.theme, args.board_hosts, args.redirect_format,
                  args.redirect_old_prefix, args.regen_light)

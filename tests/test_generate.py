@@ -17,6 +17,7 @@ from generator.generate import (
     load_exclusions,
     load_password_override,
     paginate_posts,
+    paginate_page_numbers,
     paginate_topics,
     process_forum_descs,
     read_table_prefix,
@@ -803,6 +804,42 @@ class TestPaginateTopics:
         topics = [{"topic_id": i} for i in range(1, 101)]
         pages = paginate_topics(topics, page_size=50)
         assert [len(p) for p in pages] == [50, 50]
+
+
+class TestPaginatePageNumbers:
+    # Ported from phpBB 3.3.x's own phpbb/pagination.php
+    # generate_template_pagination() — these expected sequences are
+    # traced by hand against that real algorithm, not invented, so a
+    # heavily-paginated forum's control (forum 125 on phpbbmodders.net:
+    # 48 real pages) matches real phpBB's own "1 2 3 4 5 … 48" /
+    # "1 … 19 20 21 22 23 … 48" layout instead of listing every page.
+
+    def test_five_or_fewer_pages_shows_all_no_ellipsis(self):
+        assert paginate_page_numbers(1, 5) == [1, 2, 3, 4, 5]
+        assert paginate_page_numbers(3, 5) == [1, 2, 3, 4, 5]
+
+    def test_single_page(self):
+        assert paginate_page_numbers(1, 1) == [1]
+
+    def test_page_one_of_48(self):
+        assert paginate_page_numbers(1, 48) == [1, 2, 3, 4, 5, None, 48]
+
+    def test_page_21_of_48(self):
+        assert paginate_page_numbers(21, 48) == [1, None, 19, 20, 21, 22, 23, None, 48]
+
+    def test_last_page_of_48(self):
+        assert paginate_page_numbers(48, 48) == [1, None, 44, 45, 46, 47, 48]
+
+    def test_six_pages_current_page_one_no_ellipsis_needed(self):
+        # The current-page window already spans all 6 pages, so no
+        # ellipsis is inserted even though total > 5.
+        assert paginate_page_numbers(1, 6) == [1, 2, 3, 4, 5, 6]
+
+    def test_page_near_start_of_large_total(self):
+        assert paginate_page_numbers(2, 48) == [1, 2, 3, 4, 5, None, 48]
+
+    def test_page_near_end_of_large_total(self):
+        assert paginate_page_numbers(47, 48) == [1, None, 44, 45, 46, 47, 48]
 
 
 class TestForumPaginatedRedirectBlocks:

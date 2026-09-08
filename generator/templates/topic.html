@@ -17,11 +17,11 @@
  &rsaquo; {{ topic.topic_title | e }}
 {% endblock %}
 
-{% macro pagination_controls() %}
+{% macro pagination_controls(position="") %}
 {% if pagination %}
-<div class="pagination">
+<div class="pagination pagination--align-{{ pagination_align }}{% if position %} pagination--{{ position }}{% endif %}">
   Pages: {% if pagination.current > 1 %}<a href="{{ root }}topics/{{ pagination.topic_id }}{% if pagination.current > 2 %}-p{{ pagination.current - 1 }}{% endif %}.html">&laquo; Previous</a>{% endif %}
-  {% for p in range(1, pagination.total + 1) %}{% if p == pagination.current %}<strong>{{ p }}</strong>{% else %}<a href="{{ root }}topics/{{ pagination.topic_id }}{% if p > 1 %}-p{{ p }}{% endif %}.html">{{ p }}</a>{% endif %}{% if not loop.last %} {% endif %}{% endfor %}
+  {% for p in pagination.pages %}{% if p is none %}…{% elif p == pagination.current %}<strong>{{ p }}</strong>{% else %}<a href="{{ root }}topics/{{ pagination.topic_id }}{% if p > 1 %}-p{{ p }}{% endif %}.html">{{ p }}</a>{% endif %}{% if not loop.last %} {% endif %}{% endfor %}
   {% if pagination.current < pagination.total %}<a href="{{ root }}topics/{{ pagination.topic_id }}-p{{ pagination.current + 1 }}.html">Next &raquo;</a>{% endif %}
 </div>
 {% endif %}
@@ -30,7 +30,7 @@
 {% block content %}
 {% if announcement_html %}<div class="announcement">{{ announcement_html | safe }}</div>{% endif %}
 <h2>{{ topic.topic_title | e }}</h2>
-{{ pagination_controls() }}
+{{ pagination_controls(position="top") }}
 
 {% if poll %}
 <div class="poll">
@@ -100,7 +100,7 @@
   </div>
 </div>
 {% endfor %}
-{{ pagination_controls() }}
+{{ pagination_controls(position="bottom") }}
 {% endblock %}
 
 {% block footer_note %}{{ topic.topic_posts_approved }} post(s){% if pagination %} &middot; Page {{ pagination.current }} of {{ pagination.total }}{% endif %}{% endblock %}

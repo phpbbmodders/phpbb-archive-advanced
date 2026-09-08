@@ -165,13 +165,16 @@ table.topic-table td.lastpost { font-size: 0.85em; color: #555; }
 }
 .notice strong { color: #536482; }
 
-/* Topic pagination (see TOPIC_PAGE_SIZE in generate.py) */
+/* Topic/forum pagination (see TOPIC_PAGE_SIZE/FORUM_PAGE_SIZE in generate.py) */
 .pagination {
   margin: 8px 0;
   padding: 6px 0;
   font-size: 0.9em;
-  text-align: center;
 }
+.pagination--align-left { text-align: left; }
+.pagination--align-center { text-align: center; }
+.pagination--align-right { text-align: right; }
+.pagination--top { margin-bottom: 10px; }
 .pagination a { margin: 0 3px; }
 .pagination strong { margin: 0 3px; color: #536482; }
 
