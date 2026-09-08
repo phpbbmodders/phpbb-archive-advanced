@@ -19,7 +19,7 @@ hr { border: 0; border-top: 1px solid #B3C0D8; }
 /* ── header ── */
 #page-header {
   background: linear-gradient(to bottom, #536A91 0%, #2B4C7E 100%);
-  padding: 12px 16px;
+  padding: 20px 16px 12px;
   margin-bottom: 0;
 }
 .header-titlebar { display: flex; align-items: flex-start; gap: 8px; }
